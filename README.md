@@ -1,191 +1,161 @@
-# agent-loop (scaffold)
+# agent-loop
 
-This is a design sketch, not a finished submission. It exists to
-sanity-check the architecture before the real implementation work starts.
+A multi-provider agent loop: **Claude, OpenAI and Gemini**, with file and shell tools. You can interrupt it at any point and the conversation continues cleanly. You can switch models between messages, and several people can share one session.
 
-## What's here and actually runnable
-- Full folder structure and package layout
-- `core/state.py` — provider-agnostic `ConversationState`, content blocks,
-  and an explicit `LoopState` state machine with a transition table
-- `providers/base.py` — the `AgentProvider` protocol every provider
-  implements, plus the `StreamEvent` union
-- `providers/mock_provider.py` — a working zero-cost fake provider
-- `providers/anthropic_provider.py` — real Claude adapter: extended
-  thinking, explicit prompt-cache breakpoints, and the synthetic-
-  tool_result resume invariant. Verified via a mocked-transport test
-  suite (`tests/test_anthropic_provider.py`) that fakes the SDK's
-  streaming shape — **not yet exercised against a live API call**, since
-  no `ANTHROPIC_API_KEY` was available while building this. Smoke-test
-  against the real API before the demo.
-- `providers/openai_provider.py` — real OpenAI adapter using the
-  Responses API (chosen over Chat Completions specifically for reasoning-
-  model support — see the module docstring for why). Same caveat: verified
-  via `tests/test_openai_provider.py` against a faked transport, not a
-  live call.
-- `tools/` — working `file_read`, `file_edit`, and `bash` (cancellation-
-  safe subprocess pattern + a best-effort destructive-command denylist)
-- `core/loop.py` — the orchestrator, including the queue-based bridge
-  that makes mid-stream interruption actually cancellable
-- `core/interrupt.py` — the interrupt manager
-- `cli.py` — REPL with `/switch <provider> <model>`, and a real interrupt
-  key-watcher (Ctrl-C or Esc, raw-terminal level, independent of whether
-  a prompt is active) — **needs a real TTY to test properly**; this
-  sandbox has none, so the watcher's no-TTY fallback path is what's been
-  exercised here, not an actual keypress.
-- `tests/` — 17 passing tests across the state machine, both provider
-  adapters (mocked transport), and the bash denylist
-
-Run it now with zero API keys:
 ```
-uv sync
-uv run pytest
-uv run agent   # mock provider only until you export API keys
+uv sync --all-extras
+uv run pytest                    # 86 tests, no network, no keys
+uv run agent --workdir ./sandbox # terminal UI (mock provider if no keys)
+uv run agent-server --workdir ./sandbox
+#   → http://127.0.0.1:8000/?session=demo&user=alice   (open a 2nd tab as bob)
 ```
 
-Add real providers by exporting keys before running:
+Add keys (or put them in `.env`) to enable real providers. Only providers that have a key are registered.
+
 ```
-export ANTHROPIC_API_KEY=sk-ant-...
-export OPENAI_API_KEY=sk-...
-uv run agent
-> /switch anthropic claude-haiku-4-5
+export ANTHROPIC_API_KEY=... OPENAI_API_KEY=... GEMINI_API_KEY=...
+uv run agent --model opus
+> /switch codex          # aliases: opus sonnet haiku haiku-4.5 codex gpt gpt-mini gemini gemini-pro mock
+> /switch anthropic claude-opus-4-5   # or any full model id
 ```
 
-## Explicitly NOT built yet (next steps)
-- Live-API smoke test for both real adapters (blocked on API keys)
-- Real-terminal test of the Ctrl-C/Esc interrupt watcher (blocked on TTY)
-- Web UI (FastAPI + SSE/WebSocket), reusing `AgentLoop` as-is
-- Multiplayer mode design + optional toy implementation
+Before a live demo, run `uv run python scripts/smoke_test_live.py`. It runs a tool loop, a mid-stream interrupt, a mid-tool interrupt, prompt caching, and one conversation that hops across every configured provider, all against the real APIs. See [SETUP.md](SETUP.md) and the demo script at the end of this file.
 
-## Key design decisions baked into this scaffold (open to revisiting)
-1. **Interrupt semantics**: an in-flight tool call is allowed to finish
-   rather than hard-killed, but its result is reported back to the model
-   as cancelled. Rationale: killing a `bash` command mid-write risks a
-   half-written file being *worse* than either fully-done or
-   fully-reverted. `BashTool` does kill the *subprocess* on cancellation
-   (can't leave orphaned processes) but the design still treats the
-   *result* as void either way.
-2. **State machine is data** (`VALID_TRANSITIONS` dict), not scattered
-   conditionals — makes it possible to unit test "what are all reachable
-   states" independent of any provider.
-3. **ConversationState is provider-agnostic and pydantic-typed**, so
-   `switch_provider()` mid-conversation is just changing two string
-   fields — no conversion happens until the next `stream_turn()` call.
-4. **Partial output is never silently dropped.** Text that streamed
-   before an interrupt is captured into a real `Message` with
-   `partial=True` and appended to history, rather than discarded — so
-   the next turn's context (and the transcript the user sees) reflects
-   what was actually shown, not a gap.
+---
 
-## bugs to be fixed
-Running the example tests during scaffolding surfaced two real bugs in
-the first draft, both instructive for the interrupt-handling writeup:
-- Cancelling the provider task through the queue-bridge in
-  `_stream_with_cancellation` initially got translated into a normal
-  "stream ended" signal, so the loop happily continued to `DONE`
-  instead of `INTERRUPTED` — the cancellation was real, but it never
-  reached the state machine. Fixed by distinguishing a `_CANCELLED`
-  queue marker from the normal `_SENTINEL`.
-- The assistant's completed message was never being appended to
-  `state.messages` at all (only yielded as events) — caught by
-  `test_switch_provider_mid_conversation` asserting on message count.
-- (Found later, in `cli.py`) The interrupt-key watcher's "no real TTY"
-  fallback originally just `return`ed immediately. Under piped/non-TTY
-  input, `asyncio.wait(FIRST_COMPLETED)` then saw the watcher finish
-  *before* the turn did, on every single turn, and misread that as "the
-  user pressed the interrupt key" — so every turn appeared interrupted
-  immediately, even though nothing was ever pressed. A CLI smoke test
-  with piped input caught this in about ten seconds; it would have been
-  much harder to notice in an interactive terminal session, since a real
-  developer typically wouldn't be leaving stdin unconnected. Fixed by
-  having the no-TTY branch await the same event forever instead of
-  returning, so it only ever ends via explicit cancellation.
-Both are the kind of bug that's invisible until you actually exercise
-interruption in a test, which is exactly why `MockProvider` +
-`pytest-asyncio` exist in this scaffold from day one instead of being
-bolted on later.
+## 1. Problem framing
 
-## Multiplayer mode (design)
+The core difficulty isn't calling three SDKs. It's that **the conversation must always be a valid request for whichever provider is called next**. That has to hold even after the user cancels at an arbitrary instant, and even when the history was written by a different provider. I designed around three decisions:
 
-Not implemented — this is the design the spec asks for even without code.
-Grounded in what already exists: a `ConversationState` + `AgentLoop` pair
-is currently a single-owner, single-process object. Multiplayer means
-letting more than one client attach to the *same* pair.
+| Decision | Why |
+|---|---|
+| **One provider-agnostic `ConversationState`** (`core/state.py`) is the only source of truth. Adapters translate it to wire format on *every* call. | Switching model is then a two-field pointer change. No provider keeps server-side state: OpenAI runs with `store=False` and Gemini needs none. |
+| **One cancellation path.** Interrupting means cancelling the task that iterates `run_turn()`. | Cancellation lands at whatever `await` the turn is suspended on: the HTTP stream, a subprocess, the retry backoff, or between iterations. It is caught in exactly one place. |
+| **Each layer owns its own invariants.** The loop guarantees a *semantically complete* history. Each adapter guarantees a *syntactically valid* request for its provider. | Provider quirks don't leak into the loop. The adapters' repair logic also acts as a second safety net if the loop's bookkeeping is ever wrong. |
 
-**Session model.** A session is one `(ConversationState, AgentLoop)`,
-keyed by a session id, held server-side (a `dict[str, AgentLoop]` is
-enough to start; Redis/Postgres later per the storage-interface note
-above). Any client — CLI or web — that knows the session id can attach.
-A thin FastAPI + WebSocket layer would own this dict; each connected
-client gets a fan-out `asyncio.Queue` fed from the single loop's event
-stream, so everyone watching a session sees identical `StreamEvent`s in
-real time, not a per-client re-run.
+Assumptions: one working directory per session (the tools refuse paths outside it), a trusted local user, and turns that run one at a time per session.
 
-**Two users sending a message "at the same time."** The loop's state
-machine only accepts a new user message from `IDLE` or `DONE`
-(`VALID_TRANSITIONS`), so at most one message can actually start a turn.
-The rest is a queuing question, not a data-race question: incoming
-messages are appended to a per-session FIFO in server-receive order, and
-the loop drains one at a time. Whoever's message the server saw first
-goes first — no fancier resolution needed, since this is exactly how a
-shared group chat already behaves and reinventing that would surprise
-people.
+## 2. Architecture
 
-**A message arriving *while a turn is running*.** This is the more
-interesting case, and the one worth being explicit about: should a
-second user's message barge in (auto-interrupt the first user's
-in-flight turn) or queue behind it? Default here is **queue, don't
-auto-interrupt** — silently cutting off someone else's request because
-a second person happened to type first is a worse failure mode than
-making them wait a few seconds. Interrupting an in-flight turn is still
-possible, but as an explicit action ("Stop" button / `/interrupt`
-command) any participant can take, distinct from just sending a new
-message. That action calls the existing `AgentLoop.handle_interrupt()`
-unchanged — multiplayer doesn't need a new interrupt mechanism, only a
-policy for who's allowed to trigger the existing one and how it's
-surfaced to everyone else in the room (see "attribution" below).
+```
+          CLI (cli.py)            Web/WebSocket (server.py + web/index.html)
+                  \                     /
+                   Session  (core/session.py)   queue · fan-out · interrupt policy · attribution
+                      |
+                   AgentLoop (core/loop.py)     turn loop · tools · retries · reconciliation
+                   /     |      \
+     AnthropicProvider OpenAIProvider GeminiProvider MockProvider   (providers/*, all implement AgentProvider)
+                      |
+         ConversationState (core/state.py)      messages + content blocks + LoopState machine
+```
 
-**Real-time visibility.** Yes — every `StreamEvent` (text/thinking
-deltas, tool call start/end, `MessageComplete`) is broadcast to all
-attached clients as it's produced, since they're already reading off the
-same fan-out queues. Presence ("Alex is typing...") is treated as a
-separate, ephemeral side-channel — ping-style events that never touch
-`ConversationState` — since presence is inherently lossy/best-effort and
-polluting the durable conversation history with it would be a mistake.
+- **`AgentProvider`** (`providers/base.py`) has one method that matters: `stream_turn(state, tools, model) → AsyncIterator[StreamEvent]`, ending in exactly one `MessageComplete` or `ProviderError`. The Gemini adapter was added without touching the loop, the state, or the other adapters. That's the extensibility test.
+- **Content blocks** carry provider-owned opaque data: Claude `signature` / `redacted` thinking, OpenAI `provider_meta={id, encrypted_content}`, Gemini `thought_signature` on text and call blocks. `ThinkingBlock.provider` records the author. Each adapter replays only what it can read.
+- **The state machine is data** (`VALID_TRANSITIONS`). An illegal transition raises, which is how several of the bugs below were caught.
+- **Tools** (`tools/`): `file_read` (offset/limit, refuses binaries and directories), `file_edit` (create/overwrite, or an exact `old_string → new_string` edit, always an **atomic** temp-file + `os.replace`), and `bash` (own process group, stdin closed, timeout, exit code, output cap).
 
-**Attribution.** `Message` doesn't currently carry a sender identity —
-worth adding a `author_id: str | None` field before multiplayer, so the
-UI can show "Priya interrupted the last turn" or "Sam switched to
-Opus" rather than an anonymous system action. Small, additive change to
-the existing pydantic model; the state machine and provider adapters are
-untouched by it.
+## 3. Interruption handling
 
-**Conflicts elsewhere in state.** `InterruptManager.interrupt()` is
-already idempotent — a second concurrent interrupt call on an
-already-cancelled task just returns `False` — so two users hitting
-"Stop" at once doesn't double-transition the state machine or raise.
-`switch_provider()` is not currently guarded, though: two simultaneous
-`/switch` calls would race on plain attribute writes. That's a real gap
-for a full implementation — wrapping `ConversationState` mutations
-outside of `run_turn` (provider switches, config changes) in a per-session
-`asyncio.Lock` closes it without touching the core loop logic.
+You can interrupt from anywhere: Esc or Ctrl-C in the CLI, Stop or *Interrupt & send* in the web UI, or a client disconnecting. All of them cancel the turn task. `AgentLoop._reconcile()` then uses a per-turn `_TurnContext` to tell exactly what was in flight and decides as follows:
 
-**What a minimal toy implementation would look like**, if time allowed
-past everything above: a FastAPI process holding the session dict, one
-WebSocket route that both accepts `{"type": "user_message", "text": ...}`
-/ `{"type": "interrupt"}` payloads and streams `StreamEvent`s back
-JSON-encoded, and two browser tabs (or two CLI instances pointed at the
-same session id) proving the fan-out actually works. That's a few hours
-of additional work on top of this scaffold, not a redesign.
-
-| | Claude (Anthropic) | OpenAI (Responses API) |
+| What was in flight | What happens | Why |
 |---|---|---|
-| Reasoning exposure | Full thinking blocks, replayable via `signature` | Reasoning *summary* only; raw CoT not exposed |
-| Prompt caching | Explicit `cache_control` markers per content block | Automatic, keyed by prompt prefix — no manual breakpoints |
-| Resume after interrupt | Dangling `tool_use` **must** get a matching `tool_result` or the API rejects the request — scaffold synthesizes a "cancelled" one | Dangling `function_call` can simply be omitted from the next `input` — scaffold drops it |
+| Streamed text not yet committed | Kept as an `assistant` message with `partial=True` | The user saw it, so the model should too. Otherwise the next answer repeats or contradicts it. |
+| Streamed thinking | Discarded (counted in the summary) | A signature only arrives at the end of a block. Unsigned thinking can't be replayed to Claude, and it means nothing to the other providers. |
+| Half-streamed tool-call arguments | Discarded | Never executed, so there is nothing to report. |
+| A committed assistant message whose tools are still running | Every call gets **exactly one** result: *completed* (real output), *killed* (partial stdout + "killed after 3.2s; side effects may be partial"), or *not run*. | The model must know which side effects actually happened. Tools run **sequentially** so each one is unambiguously in one of these three states. |
+| A running `bash` | SIGTERM → SIGKILL to the **whole process group**, then return its partial output | A bare `proc.kill()` orphans the children of `sh -c`. The test checks that a background child does not survive. |
+| `file_edit` | Atomic, so the file is always fully old or fully new | Hard-killing a write can't leave a half-written file. |
+| Retry backoff | Just cancelled | Nothing was committed. |
+| Nothing (idle, or between turns) | `interrupt()` returns `False`; history and state are unchanged | It's idempotent, so two users pressing Stop together is fine. |
 
-This table is the concrete answer to "each provider has different
-invariants for resuming from an interrupted state" from the spec — see
-`_to_anthropic_messages` vs `_to_input_items` for the code, and
-`tests/test_anthropic_provider.py::test_dangling_tool_use_gets_synthetic_result_before_next_call`
-/ `tests/test_openai_provider.py::test_dangling_function_call_is_dropped_not_synthesized`
-for the tests that pin this behavior down.
+Then a synthetic user note goes into the history ("The user interrupted… respond to their next message"), and the state machine moves `STREAMING/TOOL_RUNNING → INTERRUPTED → IDLE`. The user sees an `InterruptSummary`, for example: `interrupted during tool execution (bash); kept 112 chars of partial text; killed: bash#1fda8b after 1.3s`.
+
+**Why kill tools instead of letting them finish?** The scaffold let them finish. That makes interrupt latency unbounded (try `sleep 600`), and "the user said stop" should mean stop. Atomic file writes plus reporting partial output give the safety benefit of finishing without the wait.
+
+### Provider-specific resume invariants
+
+| | Claude | OpenAI (Responses) | Gemini |
+|---|---|---|---|
+| Unanswered tool call | `tool_result` required in the **immediately next** user message, tool results first → inserted **in place** | every `function_call` needs an output somewhere later (`No tool output found…`) → unanswered calls dropped | `function_response` in the next user content → synthesized in place |
+| Role order | strict alternation → consecutive same-role messages merged | free-form item list, nothing to merge | alternation → contents merged (never *parts*) |
+| Reasoning replay | thinking + redacted_thinking blocks verbatim with signature; foreign blocks dropped | encrypted reasoning items verbatim; a reasoning item must be followed by its output, so it's dropped if its call was dropped | `thought_signature` stays on its original part; foreign calls get the documented `skip_thought_signature_validator` |
+| Mid-tool-loop switch *into* the provider | manual-thinking models (4.5 family) require the last tool-loop assistant turn to start with their own thinking → thinking is disabled for that one request, with a `Notice`; adaptive models (4.6+/5.x) relax the rule | fine | fine (sentinel) |
+| Empty content | empty text and empty messages rejected → filtered | — | empty parts → filtered |
+
+`tests/test_cross_provider.py` runs **one** conversation through Claude (adaptive), OpenAI, Gemini, Claude (manual thinking) and OpenAI again, with an interrupt mid-tool and another mid-stream. Every request each fake transport receives is checked by executable versions of the rules above (`tests/wire_validators.py`).
+
+## 4. Provider-specific optimizations
+
+**Claude: thinking.** The mode is chosen per model (`thinking_mode_for`):
+- 4.6+ and 5.x models: `thinking: {type: "adaptive", display: "summarized"}` (optional `output_config.effort`). Interleaving between tool calls is automatic. These models reject `type: "enabled"`, and newer ones default to `display: "omitted"`, so we ask for summaries to make reasoning visible.
+- 4.0–4.5: `{type: "enabled", budget_tokens}` + `anthropic-beta: interleaved-thinking-2025-05-14`, with `max_tokens > budget_tokens`. The scaffold sent 4096/4096, which the API rejects.
+
+**Claude: prompt caching** uses explicit breakpoints, at most 4:
+1. **system prompt**: the prefix order is tools → system → messages, so this one breakpoint also caches the tool definitions;
+2. **the last block of the conversation**: a moving breakpoint that writes the whole history each call;
+3. **the last block of the previous user turn**: where the *previous* request's breakpoint was, which guarantees a read hit even when a tool-heavy iteration adds more than the 20-block lookback window;
+4. one optional user-pinned breakpoint (`state.cache_breakpoints`).
+
+Thinking blocks can't carry `cache_control`, so the marker walks back to the nearest eligible block. Request building never mutates state, so the cached prefix stays byte-stable. `UsageEvent` shows `cache read/write` in both UIs.
+
+**OpenAI:** Responses API (not Chat Completions), so reasoning survives across tool calls. `store=False` + `include=["reasoning.encrypted_content"]` keeps it stateless and ZDR-compatible. `reasoning.summary="auto"` streams summaries. Caching is automatic: we pin `prompt_cache_key` to the conversation id and report `cached_tokens`. Reasoning params are only sent to reasoning models (gpt-5.x, codex, o-series).
+
+**Gemini:** thought signatures are round-tripped, implicit caching is reported, automatic function calling is disabled (the loop owns execution), and thought summaries are streamed.
+
+**Long-running loops.** A turn iterates up to `max_iterations` (default 50, `AGENT_MAX_ITERATIONS`). Hitting the cap ends the turn *gracefully*: history stays valid and "continue" resumes. Transient errors (429, 5xx, 529 overloaded, network) retry with jittered exponential backoff. Partial output from a failed attempt is never committed, and UIs are told to strike it out. Tool output is capped at 30k characters (head + tail), because long loops run out of context long before they run out of iterations.
+
+## 5. Multiplayer mode (implemented)
+
+`Session` (`core/session.py`) owns one `AgentLoop`. Any number of clients subscribe, and `server.py` exposes it over WebSockets with a small web UI.
+
+- **Two people send at the same time.** A single worker runs one turn at a time, and only that turn mutates state, so there are no data races. Messages that arrive while a turn runs are **queued, not barged in**: silently cutting off someone else's request because you typed second is the worse failure. When the turn ends, everything queued is **coalesced into one turn** (`alice: …\nbob: …`), so the agent answers both together instead of running stale turns back to back.
+- **Interrupting is explicit and attributed.** Any participant can press Stop or use *Interrupt & send*, which stops the turn and runs their message next. Everyone sees "⏹ bob interrupted — killed bash after 1.3s". It reuses `AgentLoop.interrupt()` unchanged, and it's idempotent.
+- **Real-time visibility.** Every event (thinking/text deltas, tool start/end, usage, retries, switches) is broadcast to every client. Presence is a separate ephemeral event that never touches history. Late joiners get a `Snapshot` of the full state.
+- **Conflicts.** Model switches go through a lock and are broadcast, so the last writer wins and everyone sees it. A switch during a turn takes effect at the next model call. `Message.author` records who said what, and user text is prefixed with the author's name so the model can tell people apart.
+- **Not done, and how I'd do it.** Persistence (state is already a pydantic model, so it would serialize to Postgres/Redis per session). Auth and roles (who may interrupt or switch). Per-user rate limits. Multi-process fan-out (Redis pub/sub instead of in-process queues). Bounded subscriber queues so a slow client gets dropped instead of growing memory. Per-user workdirs or a container sandbox.
+
+## 6. Bugs found and fixed
+
+The scaffold "worked" in its own tests. Exercising interruption at every phase surfaced these:
+
+1. **Interrupt during tool execution crashed.** `InterruptManager` only tracked the *stream* task. During tools `interrupt()` returned `False`, so the loop attempted `TOOL_RUNNING + CLEANUP_DONE`, an illegal transition, and raised. → Replaced by the single-cancellation-path design.
+2. **Interrupt between turns crashed.** `DONE + CLEANUP_DONE` is illegal. → Interrupt is now a no-op when idle.
+3. **The synthetic `tool_result` was appended at the end of the history.** After an interrupt *and a new user message*, Claude rejects that (the result must be in the very next message). The existing test only covered the case where the dangling call was last. → Repair now happens in place.
+4. **Partial thinking was saved as visible text.** The partial-message buffer concatenated thinking and text deltas into a `TextBlock`, leaking reasoning into the transcript the model sees.
+5. **Cross-provider thinking replay.** OpenAI reasoning ids were stored in the same `signature` field and would have been sent to Claude as thinking signatures (rejected), and vice versa. → Blocks are now tagged with `provider`.
+6. **`max_tokens` == `budget_tokens`** (4096/4096): rejected by the API whenever thinking was on. Newer Claude models also reject `type: "enabled"` outright. → Thinking mode is chosen per model.
+7. **`MaxIterationsExceeded` left the state wedged in `STREAMING`**, so every later message failed. → The turn now ends gracefully.
+8. **Tool exceptions killed the turn.** Wrong arguments (`TypeError`), reading a directory, invalid JSON. → Each becomes an error result the model can react to.
+9. **`bash` orphaned children** (`proc.kill()` only kills the shell) and inherited the terminal's stdin, which competed with the Esc key watcher. → Process group + `stdin=DEVNULL`.
+10. **The path check used a string prefix**, so `/work2` passed for `/work`. → `Path.is_relative_to` after resolving symlinks.
+11. **A lone Esc keypress fired late and ate the next message.** The VT100 parser holds a bare `ESC` byte, since it might start an escape sequence, until more input arrives. The interrupt therefore fired on the *next* keypress, and the watcher swallowed that input. Found by driving the real CLI through a pseudo-terminal (`tests/test_cli_pty.py`), which the scaffold noted it had never been able to test. → Pending keys are flushed after 50 ms.
+12. `ProviderError` was swallowed silently by the CLI, and OpenAI got no system prompt.
+13. **Earlier scaffold bugs, kept for the story:** cancellation translated into a normal "stream ended"; completed messages were never appended; a no-TTY watcher returned early and read as a keypress.
+
+## 7. Trade-offs and limitations
+
+- **Sequential tools** give up parallel speed for deterministic side effects and precise interrupt reporting. Running read-only tools concurrently would be a cheap improvement.
+- **The bash denylist is not a sandbox.** It catches accidents, not malice. Real isolation would be a container or jail per session.
+- **No context compaction** beyond truncating tool output. Very long sessions will eventually hit the context window. The next step is summarizing old turns (Claude's context-management features, or our own summarizer behind the same `ConversationState`).
+- **Partial assistant text is kept** after interrupts. Some products drop it instead. Keeping it means the model knows what the user already saw, at the cost of occasionally leaving a dangling half-sentence in context.
+- **Live API verification:** the adapters are verified against introspected SDK types and docs, with fake transports. I couldn't reach the provider APIs from the build environment. `scripts/smoke_test_live.py` is the pre-demo check.
+
+## 8. Tests
+
+`uv run pytest` runs 86 tests in about 15 seconds with no network:
+- `test_interrupt.py`: interrupt during text, thinking, a single tool, the middle of several tools, and retry backoff; consumer cancellation and `aclose()`; idempotent concurrent interrupts; max iterations; retries; tool failures; truncation. Every interrupt test ends by checking that a new turn completes.
+- `test_cross_provider.py`: the five-hop conversation above, validated against each provider's rules.
+- `test_anthropic_provider.py`, `test_openai_provider.py`, `test_gemini_provider.py`: request shapes, thinking modes, cache breakpoint placement, reasoning/signature replay, usage, error classification.
+- `test_session.py`, `test_server.py`: coalescing, fan-out, attributed interrupts, interrupt-and-send, concurrent switches, presence, and two real WebSocket clients.
+- `test_tools.py`: atomic edits, path containment, process-group kill, timeouts, stdin.
+- `test_cli_pty.py`: the real CLI in a pseudo-terminal. Esc and Ctrl-C interrupt a running tool, and the next message isn't lost.
+
+## 9. Demo script (≈8 min)
+
+1. `uv run agent --workdir ./sandbox --model opus`: "create a python fizzbuzz in fizz.py, run it, and fix any bug". Shows thinking, tool calls, and `cache read=…` growing on each iteration.
+2. While it's working, press **Esc** → the summary prints. Type "actually make it print in reverse". It continues cleanly.
+3. `/switch codex` → "add a unit test and run it". OpenAI picks up the history Claude wrote. `/history` shows tool results, the partial message and the synthetic note.
+4. "run `sleep 60`" → Esc mid-tool → "killed bash after …". The next message works.
+5. `/switch haiku-4.5` right after an interrupted tool → the manual-thinking notice (rule 4 of the resume table).
+6. `uv run agent-server --workdir ./sandbox`, two tabs (alice and bob): both type at once → queued + coalesced. bob presses Stop on alice's turn. The model dropdown switches for everyone.

@@ -1,45 +1,40 @@
 # Setup
 
-## Zero-cost path (default, no keys needed)
+Requires Python 3.11+ and [uv](https://docs.astral.sh/uv/).
+
+## Zero-cost path (no keys)
 ```
-uv sync
-uv run pytest        # 17 tests, no network calls, no cost
-uv run agent          # CLI against the mock provider
+uv sync --all-extras
+uv run pytest                      # 86 tests, no network calls
+uv run agent --workdir ./sandbox   # CLI on the mock provider
+```
+The mock provider is enough to demo the loop mechanics: `!<command>` makes it call `bash`. For example, run `!echo hi; sleep 30`, then press Esc to interrupt mid-tool.
+
+## Real providers
+Put keys in the environment or in a `.env` file in the directory you run from:
+```
+ANTHROPIC_API_KEY=...
+OPENAI_API_KEY=...
+GEMINI_API_KEY=...          # or GOOGLE_API_KEY
+AGENT_PROVIDER=anthropic    # optional default provider
+AGENT_MODEL=claude-opus-5-5 # optional default model
+AGENT_MAX_ITERATIONS=50     # optional
+```
+Only providers with keys are registered. Model aliases (`/switch opus`, `codex`, `gemini`, …) live in `src/agent_loop/config.py`. Edit them if model names change. Any full model id also works: `/switch openai gpt-5.5`.
+
+## Live smoke test (a few cents)
+```
+uv run python scripts/smoke_test_live.py                       # every configured provider
+uv run python scripts/smoke_test_live.py anthropic --model anthropic=claude-haiku-4-5
+```
+For each provider it runs: a tool loop, an interrupt mid-stream and a continuation, an interrupt mid-tool and a continuation, and a prompt-caching check. With 2+ providers it also runs a cross-provider conversation. Run this before the demo.
+
+## Multiplayer server
+```
+uv run agent-server --workdir ./sandbox --port 8000
+open "http://127.0.0.1:8000/?session=demo&user=alice"
+open "http://127.0.0.1:8000/?session=demo&user=bob"
 ```
 
-## Adding real providers
-```
-export ANTHROPIC_API_KEY=sk-ant-...
-export OPENAI_API_KEY=sk-...
-uv run agent
-> /switch anthropic claude-haiku-4-5
-```
-Either key can be set independently — the CLI only registers the
-providers it has keys for; `mock` is always available regardless.
-
-Optional overrides (see `config.py`):
-```
-export AGENT_PROVIDER=anthropic   # default provider on startup
-export AGENT_MODEL=claude-haiku-4-5
-```
-
-## Live smoke test (costs a small amount of real money)
-The pytest suite is entirely mocked-transport — no network calls, no
-cost, safe to run anytime. To confirm the real adapters actually work
-against the live APIs (not yet verified as of this scaffold — see
-README), run:
-```
-uv run python scripts/smoke_test_live.py            # tests whichever keys are set
-uv run python scripts/smoke_test_live.py anthropic   # just one
-uv run python scripts/smoke_test_live.py openai
-```
-Each call uses the cheapest current small model and a one-word response,
-so the cost per run is a small fraction of a cent per provider tested.
-
-## Testing the interrupt key-watcher
-`cli.py`'s Ctrl-C/Esc interrupt watcher needs a real terminal (TTY) to
-do anything — it safely no-ops under piped input (used for the CLI smoke
-tests during development), but that means an actual keypress has never
-been exercised. Run `uv run agent` in a real terminal, send a message,
-and press Ctrl-C or Esc while it's streaming to confirm the interrupt
-actually fires before relying on it for the demo.
+## Interrupt keys
+In the CLI, **Esc** or **Ctrl-C** while the agent is working interrupts it. This needs a real terminal. With piped stdin, send SIGINT instead (`kill -INT <pid>`). Ctrl-C at an empty prompt clears the line, and Ctrl-D quits.
