@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>agent-loop · multiplayer</title>
+<style>
+  :root {
+    --bg: #f6f5f1; --panel: #ffffff; --ink: #1d1c1a; --muted: #7a776f; --line: #e4e1d8;
+    --accent: #c2562b; --accent-soft: #f6e4da; --tool: #eef1f4; --ok: #2f7d4f; --err: #b3261e;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 15px/1.5 -apple-system, "Segoe UI", Inter, sans-serif; background: var(--bg); color: var(--ink);
+         height: 100vh; display: grid; grid-template-rows: auto 1fr auto; }
+  header { display: flex; align-items: center; gap: 14px; padding: 10px 18px; border-bottom: 1px solid var(--line); background: var(--panel); }
+  header h1 { font-size: 15px; margin: 0; letter-spacing: .02em; }
+  header h1 span { color: var(--muted); font-weight: 400; }
+  .chips { display: flex; gap: 6px; flex: 1; }
+  .chip { font-size: 12px; padding: 2px 9px; border-radius: 99px; background: var(--accent-soft); color: var(--accent); }
+  .chip.me { background: var(--accent); color: white; }
+  select, button, textarea { font: inherit; }
+  select { padding: 4px 8px; border: 1px solid var(--line); border-radius: 6px; background: white; }
+  #status { font-size: 12px; color: var(--muted); min-width: 80px; text-align: right; }
+  #status.busy { color: var(--accent); }
+  main { overflow-y: auto; padding: 20px 0; }
+  .col { max-width: 860px; margin: 0 auto; padding: 0 18px; }
+  .msg { margin: 0 0 14px; }
+  .who { font-size: 12px; color: var(--muted); margin-bottom: 3px; }
+  .user .body { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; white-space: pre-wrap; display: inline-block; }
+  .user.queued .body { opacity: .6; border-style: dashed; }
+  .assistant .text { white-space: pre-wrap; margin: 4px 0; }
+  .assistant .text.discarded { text-decoration: line-through; opacity: .45; }
+  details.thinking { color: var(--muted); font-size: 13px; margin: 4px 0; }
+  details.thinking summary { cursor: pointer; }
+  details.thinking div { white-space: pre-wrap; border-left: 2px solid var(--line); padding-left: 10px; }
+  .tool { background: var(--tool); border-radius: 8px; padding: 6px 10px; margin: 6px 0; font: 13px/1.45 var(--mono); }
+  .tool .head { color: #334; }
+  .tool .head b { color: var(--accent); }
+  .tool pre { margin: 4px 0 0; max-height: 220px; overflow: auto; white-space: pre-wrap; color: #445; }
+  .tool.err pre { color: var(--err); }
+  .tool.running .head::after { content: " · running…"; color: var(--muted); }
+  .meta { font-size: 11px; color: var(--muted); font-family: var(--mono); }
+  .sys { text-align: center; font-size: 12px; color: var(--muted); margin: 10px 0; }
+  .banner { background: #fff4e5; border: 1px solid #f3d4a5; color: #8a5300; border-radius: 8px; padding: 6px 10px; font-size: 13px; margin: 6px 0; }
+  .banner.err { background: #fdecea; border-color: #f2b8b5; color: var(--err); }
+  footer { background: var(--panel); border-top: 1px solid var(--line); padding: 12px 0; }
+  footer .col { display: flex; gap: 8px; align-items: flex-end; }
+  textarea { flex: 1; resize: none; border: 1px solid var(--line); border-radius: 10px; padding: 9px 12px; min-height: 44px; max-height: 160px; outline: none; }
+  textarea:focus { border-color: var(--accent); }
+  button { border: 0; border-radius: 8px; padding: 10px 14px; cursor: pointer; background: var(--ink); color: white; }
+  button.secondary { background: white; color: var(--ink); border: 1px solid var(--line); }
+  button.stop { background: var(--err); }
+  button:disabled { opacity: .35; cursor: default; }
+  .hint { font-size: 11px; color: var(--muted); max-width: 860px; margin: 6px auto 0; padding: 0 18px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>agent-loop <span id="sid"></span></h1>
+  <div class="chips" id="users"></div>
+  <select id="model" title="Switch model for everyone">
+    <option value="">switch model…</option>
+    <option>opus</option><option>sonnet</option><option>haiku</option><option>haiku-4.5</option>
+    <option>codex</option><option>gpt</option><option>gpt-mini</option>
+    <option>gemini</option><option>gemini-pro</option><option>mock</option>
+  </select>
+  <div id="status">connecting…</div>
+</header>
+<main id="scroll"><div class="col" id="log"></div></main>
+<footer>
+  <div class="col">
+    <textarea id="input" rows="1" placeholder="Message the agent… (Enter to send, Shift+Enter newline)"></textarea>
+    <button id="send">Send</button>
+    <button id="barge" class="secondary" title="Interrupt the running turn and send this now">Interrupt &amp; send</button>
+    <button id="stop" class="stop" disabled title="Esc">Stop</button>
+  </div>
+  <div class="hint">Messages sent while the agent is working are queued and answered together. Anyone can press Stop (Esc).</div>
+</footer>
+<script>
+const params = new URLSearchParams(location.search);
+const sid = params.get("session") || "demo";
+const me = params.get("user") || ("user" + Math.floor(Math.random() * 1000));
+document.getElementById("sid").textContent = `· session ${sid} · you are ${me}`;
+const $log = document.getElementById("log"), $scroll = document.getElementById("scroll");
+const $input = document.getElementById("input"), $status = document.getElementById("status");
+const $stop = document.getElementById("stop");
+let turn = null, busy = false;
+
+const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
+const stick = () => { const near = $scroll.scrollHeight - $scroll.scrollTop - $scroll.clientHeight < 120; return () => { if (near) $scroll.scrollTop = $scroll.scrollHeight; }; };
+function add(node) { const s = stick(); $log.appendChild(node); s(); return node; }
+function sys(text, cls = "sys") { return add(el("div", cls, text)); }
+function setBusy(b) { busy = b; $stop.disabled = !b; $status.textContent = b ? "agent working…" : "idle"; $status.className = b ? "busy" : ""; }
+
+function userMsg(author, text, queued) {
+  const m = el("div", "msg user" + (queued ? " queued" : ""));
+  m.appendChild(el("div", "who", author + (queued ? " · queued" : "")));
+  m.appendChild(el("div", "body", text));
+  return add(m);
+}
+function newTurn(label) {
+  const m = el("div", "msg assistant");
+  m.appendChild(el("div", "who", label));
+  add(m);
+  turn = { root: m, text: null, thinking: null, tools: {} };
+  return turn;
+}
+function ensureTurn() { return turn || newTurn("assistant"); }
+function textSeg() { const t = ensureTurn(); if (!t.text) { t.text = el("div", "text"); t.root.appendChild(t.text); t.thinking = null; } return t.text; }
+function thinkingSeg() {
+  const t = ensureTurn();
+  if (!t.thinking) { const d = el("details", "thinking"); d.appendChild(el("summary", null, "thinking")); t.thinkDiv = d.appendChild(el("div")); t.root.appendChild(d); t.thinking = d; t.text = null; }
+  return t.thinkDiv;
+}
+function toolCard(id, name, input) {
+  const t = ensureTurn(); t.text = null; t.thinking = null;
+  const c = el("div", "tool running");
+  const head = el("div", "head"); head.innerHTML = `<b></b> <span></span>`;
+  head.querySelector("b").textContent = name;
+  head.querySelector("span").textContent = input.command || input.path || JSON.stringify(input);
+  c.appendChild(head); t.root.appendChild(c); t.tools[id] = c; return c;
+}
+
+function renderHistory(state) {
+  $log.innerHTML = "";
+  for (const m of state.messages) {
+    if (m.role === "user") { if (m.synthetic) sys("· interrupt note added to context ·"); else { const a = m.author || "user", t = m.content.map(b => b.text || "").join(""); userMsg(a, t.startsWith(a + ": ") ? t.slice(a.length + 2) : t); } continue; }
+    if (m.role === "assistant") {
+      newTurn(`${m.provider || "assistant"} · ${m.model || ""}${m.partial ? " · partial" : ""}`);
+      for (const b of m.content) {
+        if (b.type === "text") textSeg().textContent += b.text;
+        else if (b.type === "thinking" && b.text) thinkingSeg().textContent += b.text;
+        else if (b.type === "tool_use") toolCard(b.id, b.tool_name, b.input);
+      }
+      continue;
+    }
+    if (m.role === "tool" && turn) for (const b of m.content) {
+      const c = turn.tools[b.tool_use_id]; if (!c) continue;
+      c.classList.remove("running"); if (b.is_error) c.classList.add("err");
+      c.appendChild(el("pre", null, b.output.slice(0, 4000)));
+    }
+  }
+  turn = null;
+}
+
+const handlers = {
+  snapshot(e) { renderHistory(e.state); renderUsers(e.users); setBusy(e.state.state === "streaming" || e.state.state === "tool_running"); sys(`connected · ${e.state.active_provider} / ${e.state.active_model} · providers: ${e.providers.join(", ")}`); },
+  presence(e) { renderUsers(e.users); if (e.joined && e.joined !== me) sys(`${e.joined} joined`); if (e.left) sys(`${e.left} left`); },
+  user_message(e) { userMsg(e.author, e.text, e.queued); },
+  turn_started(e) { setBusy(true); document.querySelectorAll(".user.queued").forEach(n => { n.classList.remove("queued"); n.querySelector(".who").textContent = n.querySelector(".who").textContent.replace(" · queued", ""); }); newTurn(`${e.provider} · ${e.model} · answering ${e.authors.join(", ")}`); },
+  thinking_delta(e) { const s = stick(); thinkingSeg().textContent += e.text; s(); },
+  text_delta(e) { const s = stick(); textSeg().textContent += e.text; s(); },
+  tool_exec_start(e) { const s = stick(); toolCard(e.id, e.tool_name, e.input); s(); },
+  tool_exec_end(e) { const c = ensureTurn().tools[e.id]; if (!c) return; const s = stick(); c.classList.remove("running"); if (e.is_error) c.classList.add("err"); c.appendChild(el("pre", null, e.output.slice(0, 4000))); c.appendChild(el("div", "meta", `${e.duration_s}s`)); s(); },
+  usage(e) { const t = ensureTurn(); t.text = null; t.thinking = null; const parts = [`${e.model}`, `in ${e.input_tokens}`, `out ${e.output_tokens}`]; if (e.reasoning_tokens) parts.push(`reasoning ${e.reasoning_tokens}`); if (e.cache_read_tokens || e.cache_write_tokens) parts.push(`cache read ${e.cache_read_tokens} / write ${e.cache_write_tokens}`); t.root.appendChild(el("div", "meta", parts.join(" · "))); },
+  retrying(e) { if (e.discarded_partial && turn && turn.text) turn.text.classList.add("discarded"); if (turn) turn.text = null; ensureTurn().root.appendChild(el("div", "banner", `retry ${e.attempt} in ${e.delay_s}s — ${e.error}`)); },
+  notice(e) { (turn ? turn.root : $log).appendChild(el("div", "banner", e.text)); },
+  error(e) { (turn ? turn.root : $log).appendChild(el("div", "banner err", e.message)); },
+  turn_interrupted(e) { document.querySelectorAll(".tool.running").forEach(c => { c.classList.remove("running"); c.classList.add("err"); c.appendChild(el("pre", null, "killed by interrupt")); }); const d = e.summary ? describe(e.summary) : ""; (turn ? turn.root : $log).appendChild(el("div", "banner", `⏹ ${e.by === me ? "you" : e.by} interrupted${d ? " — " + d : ""}`)); },
+  turn_ended(e) { if (e.reason === "max_iterations") sys(e.detail); if (e.reason === "error") (turn ? turn.root : $log).appendChild(el("div", "banner err", e.detail)); turn = null; setBusy(false); },
+  provider_switched(e) { sys(`${e.by === me ? "you" : e.by} switched to ${e.provider} / ${e.model}`); },
+};
+function describe(s) {
+  const p = [`during ${s.phase}`];
+  if (s.kept_partial_text_chars) p.push(`kept ${s.kept_partial_text_chars} chars of partial text`);
+  if (s.killed_tools.length) p.push("killed " + s.killed_tools.join(", "));
+  if (s.skipped_tools.length) p.push("skipped " + s.skipped_tools.join(", "));
+  if (s.discarded.length) p.push("discarded " + s.discarded.join(", "));
+  return p.join("; ");
+}
+function renderUsers(users) {
+  const box = document.getElementById("users"); box.innerHTML = "";
+  for (const u of users) box.appendChild(el("span", "chip" + (u === me ? " me" : ""), u));
+}
+
+let ws;
+function connect() {
+  ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws/${encodeURIComponent(sid)}?user=${encodeURIComponent(me)}`);
+  ws.onmessage = (m) => { const e = JSON.parse(m.data); (handlers[e.type] || (() => {}))(e); };
+  ws.onclose = () => { $status.textContent = "reconnecting…"; setTimeout(connect, 1000); };
+}
+connect();
+
+function send(interrupt) {
+  const text = $input.value.trim(); if (!text) return;
+  ws.send(JSON.stringify({ type: "message", text, interrupt })); $input.value = ""; $input.style.height = "";
+}
+document.getElementById("send").onclick = () => send(false);
+document.getElementById("barge").onclick = () => send(true);
+$stop.onclick = () => ws.send(JSON.stringify({ type: "interrupt" }));
+document.getElementById("model").onchange = (ev) => { if (ev.target.value) ws.send(JSON.stringify({ type: "switch", alias: ev.target.value })); ev.target.value = ""; };
+$input.addEventListener("keydown", (ev) => { if (ev.key === "Enter" && !ev.shiftKey) { ev.preventDefault(); send(false); } });
+$input.addEventListener("input", () => { $input.style.height = "auto"; $input.style.height = Math.min($input.scrollHeight, 160) + "px"; });
+document.addEventListener("keydown", (ev) => { if (ev.key === "Escape" && busy) ws.send(JSON.stringify({ type: "interrupt" })); });
+</script>
+</body>
+</html>
