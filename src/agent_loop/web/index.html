@@ -3,196 +3,1095 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>agent-loop · multiplayer</title>
+<title>agent-loop</title>
+<meta name="description" content="A multi-provider agent loop you can interrupt at any point. Watch the loop's state, context and prompt cache live.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@400;500;600&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap" rel="stylesheet">
 <style>
-  :root {
-    --bg: #f6f5f1; --panel: #ffffff; --ink: #1d1c1a; --muted: #7a776f; --line: #e4e1d8;
-    --accent: #c2562b; --accent-soft: #f6e4da; --tool: #eef1f4; --ok: #2f7d4f; --err: #b3261e;
-    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
-  }
-  * { box-sizing: border-box; }
-  body { margin: 0; font: 15px/1.5 -apple-system, "Segoe UI", Inter, sans-serif; background: var(--bg); color: var(--ink);
-         height: 100vh; display: grid; grid-template-rows: auto 1fr auto; }
-  header { display: flex; align-items: center; gap: 14px; padding: 10px 18px; border-bottom: 1px solid var(--line); background: var(--panel); }
-  header h1 { font-size: 15px; margin: 0; letter-spacing: .02em; }
-  header h1 span { color: var(--muted); font-weight: 400; }
-  .chips { display: flex; gap: 6px; flex: 1; }
-  .chip { font-size: 12px; padding: 2px 9px; border-radius: 99px; background: var(--accent-soft); color: var(--accent); }
-  .chip.me { background: var(--accent); color: white; }
-  select, button, textarea { font: inherit; }
-  select { padding: 4px 8px; border: 1px solid var(--line); border-radius: 6px; background: white; }
-  #status { font-size: 12px; color: var(--muted); min-width: 80px; text-align: right; }
-  #status.busy { color: var(--accent); }
-  main { overflow-y: auto; padding: 20px 0; }
-  .col { max-width: 860px; margin: 0 auto; padding: 0 18px; }
-  .msg { margin: 0 0 14px; }
-  .who { font-size: 12px; color: var(--muted); margin-bottom: 3px; }
-  .user .body { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; white-space: pre-wrap; display: inline-block; }
-  .user.queued .body { opacity: .6; border-style: dashed; }
-  .assistant .text { white-space: pre-wrap; margin: 4px 0; }
-  .assistant .text.discarded { text-decoration: line-through; opacity: .45; }
-  details.thinking { color: var(--muted); font-size: 13px; margin: 4px 0; }
-  details.thinking summary { cursor: pointer; }
-  details.thinking div { white-space: pre-wrap; border-left: 2px solid var(--line); padding-left: 10px; }
-  .tool { background: var(--tool); border-radius: 8px; padding: 6px 10px; margin: 6px 0; font: 13px/1.45 var(--mono); }
-  .tool .head { color: #334; }
-  .tool .head b { color: var(--accent); }
-  .tool pre { margin: 4px 0 0; max-height: 220px; overflow: auto; white-space: pre-wrap; color: #445; }
-  .tool.err pre { color: var(--err); }
-  .tool.running .head::after { content: " · running…"; color: var(--muted); }
-  .meta { font-size: 11px; color: var(--muted); font-family: var(--mono); }
-  .sys { text-align: center; font-size: 12px; color: var(--muted); margin: 10px 0; }
-  .banner { background: #fff4e5; border: 1px solid #f3d4a5; color: #8a5300; border-radius: 8px; padding: 6px 10px; font-size: 13px; margin: 6px 0; }
-  .banner.err { background: #fdecea; border-color: #f2b8b5; color: var(--err); }
-  footer { background: var(--panel); border-top: 1px solid var(--line); padding: 12px 0; }
-  footer .col { display: flex; gap: 8px; align-items: flex-end; }
-  textarea { flex: 1; resize: none; border: 1px solid var(--line); border-radius: 10px; padding: 9px 12px; min-height: 44px; max-height: 160px; outline: none; }
-  textarea:focus { border-color: var(--accent); }
-  button { border: 0; border-radius: 8px; padding: 10px 14px; cursor: pointer; background: var(--ink); color: white; }
-  button.secondary { background: white; color: var(--ink); border: 1px solid var(--line); }
-  button.stop { background: var(--err); }
-  button:disabled { opacity: .35; cursor: default; }
-  .hint { font-size: 11px; color: var(--muted); max-width: 860px; margin: 6px auto 0; padding: 0 18px; }
+:root {
+  --paper: #E8ECEF; --sheet: #FBFCFC; --well: #F0F3F5; --ink: #15212A; --ink2: #46555F; --ink3: #74828C;
+  --rule: #D2D9DF; --rule2: #E2E7EB;
+  --think: #6A5CC4; --say: #14707C; --tool: #A3670A; --irq: #C8243A; --ok: #2C7A4B;
+  --scope: #14202A; --scope-grid: #223240; --scope-ink: #A9B9C5; --scope-think: #A99CFF; --scope-say: #58D2C9;
+  --scope-tool: #F2B544; --scope-irq: #FF5A6B; --scope-idle: #3A4C5A;
+  --sans: "IBM Plex Sans", system-ui, sans-serif; --cond: "IBM Plex Sans Condensed", "IBM Plex Sans", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body { margin: 0; background: var(--paper); color: var(--ink); font: 15px/1.55 var(--sans);
+  display: grid; grid-template-rows: auto auto minmax(0, 1fr); overflow: hidden; }
+button, select, input, textarea { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--say); outline-offset: 2px; }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+
+/* ---------- header ---------- */
+header { display: flex; align-items: center; gap: 18px; padding: 9px 18px; background: var(--sheet); border-bottom: 1px solid var(--rule); }
+.brand { display: flex; align-items: center; gap: 9px; font: 600 18px/1 var(--cond); letter-spacing: -.01em; white-space: nowrap; }
+.brand svg { flex: none; }
+.conn { display: flex; align-items: center; gap: 8px; border: 1px solid var(--rule); background: var(--well); border-radius: 6px;
+  padding: 5px 11px; font: 500 13.5px/1.2 var(--cond); cursor: pointer; max-width: 340px; }
+.conn:hover { border-color: var(--ink3); }
+.conn .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ink3); flex: none; }
+.conn[data-status="live"] .dot { background: var(--ok); }
+.conn[data-status="demo"] .dot { background: var(--think); }
+.conn[data-status="down"] .dot { background: var(--irq); }
+.conn span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.spacer { flex: 1; }
+.model { display: flex; align-items: center; gap: 8px; font: 500 13.5px var(--cond); color: var(--ink2); }
+.model select { font: 500 14px var(--cond); color: var(--ink); border: 1px solid var(--rule); border-radius: 6px; background: var(--sheet); padding: 5px 8px; max-width: 260px; }
+.people { display: flex; align-items: center; }
+.avatar { width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; font: 600 12.5px var(--cond);
+  color: white; border: 2px solid var(--sheet); margin-left: -6px; text-transform: uppercase; }
+.avatar.me { box-shadow: 0 0 0 2px var(--ink); }
+.close-inspect { display: none; float: right; padding: 3px 10px; margin: -2px 0 6px 10px; }
+.inspect-toggle { display: none; border: 1px solid var(--rule); background: var(--sheet); border-radius: 6px; padding: 5px 10px; font: 500 13.5px var(--cond); cursor: pointer; }
+
+/* ---------- trace strip (the oscilloscope) ---------- */
+.trace { background: var(--scope); color: var(--scope-ink); display: grid; grid-template-columns: 88px minmax(0, 1fr); border-bottom: 1px solid #0c151c; }
+.lanes { display: grid; grid-template-rows: 26px repeat(4, 22px) 10px; font: 500 12.5px/22px var(--cond); padding-left: 18px; }
+.lanes .cap { line-height: 26px; color: #6F8494; }
+.trace svg { width: 100%; height: 124px; display: block; }
+.trace-caption { font: 500 12.5px var(--cond); fill: #8FA3B2; }
+.trace-label { font: 500 11.5px var(--cond); fill: var(--scope); }
+.trace-irq-label { font: 600 12px var(--cond); fill: var(--scope-irq); }
+
+/* ---------- main ---------- */
+main { display: grid; grid-template-columns: minmax(0, 1fr) 380px; min-height: 0; }
+.chat { display: grid; grid-template-rows: minmax(0, 1fr) auto; min-height: 0; background: var(--sheet); }
+.log { overflow-y: auto; padding: 26px 0 40px; scroll-behavior: smooth; }
+.col { max-width: 760px; margin: 0 auto; padding: 0 28px; }
+
+.empty { padding: 7vh 0 0; }
+.empty h1 { font: 600 34px/1.15 var(--cond); letter-spacing: -.015em; margin: 0 0 12px; max-width: 18ch; }
+.empty p { color: var(--ink2); margin: 0 0 22px; max-width: 62ch; font-size: 16px; }
+.tries { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; }
+.try { text-align: left; border: 1px solid var(--rule); background: var(--sheet); border-radius: 8px; padding: 11px 13px; cursor: pointer; }
+.try:hover { border-color: var(--ink2); }
+.try b { display: block; font: 600 15px/1.3 var(--cond); margin-bottom: 3px; }
+.try span { color: var(--ink2); font-size: 13.5px; line-height: 1.4; display: block; }
+
+.u { margin: 22px 0 6px; }
+.u .who { font: 500 13px var(--cond); color: var(--ink2); margin-bottom: 4px; display: flex; gap: 8px; align-items: center; }
+.u .who i { font-style: normal; font: 500 12px var(--cond); color: var(--tool); border: 1px solid currentColor; border-radius: 4px; padding: 0 6px; }
+.u .body { background: var(--well); border-left: 3px solid var(--ink3); padding: 8px 13px; white-space: pre-wrap; border-radius: 0 6px 6px 0; }
+.u.queued .body { border-left-style: dashed; color: var(--ink2); }
+.note { margin: 12px 0; font: 500 13px var(--cond); color: var(--ink3); }
+
+.turn { margin: 14px 0 8px; }
+.turn > .who { font: 600 13.5px var(--cond); color: var(--ink); margin-bottom: 6px; display: flex; gap: 10px; align-items: baseline; }
+.turn > .who small { font: 400 13px var(--cond); color: var(--ink3); }
+.prose { font-size: 16px; line-height: 1.62; max-width: 68ch; }
+.prose p { margin: 0 0 .7em; }
+.prose code { font: 14px var(--mono); background: var(--well); padding: 1px 4px; border-radius: 4px; }
+.prose pre { font: 13.5px/1.5 var(--mono); background: var(--well); padding: 10px 12px; border-radius: 6px; overflow-x: auto; }
+.prose.discarded { text-decoration: line-through; opacity: .45; }
+.prose.cut > :last-child::after { content: ""; display: inline-block; width: 18px; height: 3px; background: var(--irq); vertical-align: middle; margin-left: 4px; }
+details.think { margin: 4px 0 8px; border-left: 2px solid var(--think); padding-left: 12px; }
+details.think summary { cursor: pointer; font: 500 13.5px var(--cond); color: var(--think); list-style: none; }
+details.think summary::-webkit-details-marker { display: none; }
+details.think summary::before { content: "▸ "; }
+details.think[open] summary::before { content: "▾ "; }
+details.think div { color: var(--ink2); font-size: 14px; white-space: pre-wrap; margin-top: 4px; }
+.tool { margin: 6px 0; border: 1px solid var(--rule2); border-radius: 7px; background: #FDFDFC; }
+.tool summary { display: grid; grid-template-columns: 18px auto minmax(0, 1fr) auto; gap: 9px; align-items: center; padding: 6px 10px; cursor: pointer; list-style: none; }
+.tool summary::-webkit-details-marker { display: none; }
+.tool .st { width: 10px; height: 10px; border-radius: 50%; background: var(--ok); justify-self: center; }
+.tool.running .st { background: var(--tool); animation: pulse 1s ease-in-out infinite; }
+.tool.err .st { background: var(--irq); }
+.tool.killed .st { background: var(--irq); border-radius: 2px; }
+.tool .nm { font: 600 13.5px var(--cond); color: var(--tool); }
+.tool .arg { font: 13px var(--mono); color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tool .dur { font: 400 12.5px var(--cond); color: var(--ink3); }
+.tool pre { margin: 0; border-top: 1px solid var(--rule2); padding: 8px 12px; font: 12.5px/1.5 var(--mono); white-space: pre-wrap; max-height: 260px; overflow: auto; color: var(--ink2); }
+.tool.err pre, .tool.killed pre { color: #8E1F2E; }
+@keyframes pulse { 50% { opacity: .35; } }
+.cut-banner { margin: 10px 0; padding: 9px 13px; border-left: 3px solid var(--irq); background: #FBEDEF; color: #6E1422; font-size: 14px; border-radius: 0 6px 6px 0; }
+.cut-banner b { font: 600 14px var(--cond); }
+.cut-banner ul { margin: 4px 0 0; padding-left: 18px; }
+.banner { margin: 8px 0; padding: 7px 12px; border-left: 3px solid var(--tool); background: #FBF4E6; color: #5F3D05; font-size: 14px; border-radius: 0 6px 6px 0; }
+.banner.err { border-color: var(--irq); background: #FBEDEF; color: #6E1422; }
+.turn-foot { font: 400 12.5px var(--cond); color: var(--ink3); margin-top: 4px; }
+
+/* ---------- composer ---------- */
+.composer { border-top: 1px solid var(--rule); background: var(--sheet); padding: 12px 0 14px; }
+.composer textarea { width: 100%; resize: none; border: 1px solid var(--rule); border-radius: 8px; padding: 10px 13px; min-height: 48px; max-height: 180px; background: white; font-size: 15.5px; }
+.composer textarea:focus { outline: none; border-color: var(--say); box-shadow: 0 0 0 3px rgba(20,112,124,.12); }
+.row { display: flex; align-items: center; gap: 10px; margin-top: 8px; flex-wrap: wrap; }
+.row .hint { font: 400 13px var(--cond); color: var(--ink3); }
+.row select { border: 1px solid var(--rule); border-radius: 6px; background: white; padding: 3px 6px; font: 500 13.5px var(--cond); }
+.btn { border: 1px solid var(--ink); background: var(--ink); color: white; border-radius: 7px; padding: 7px 15px; font: 600 14px var(--cond); cursor: pointer; }
+.btn.ghost { background: transparent; color: var(--ink); border-color: var(--rule); }
+.btn.ghost:hover { border-color: var(--ink2); }
+.btn.stop { background: var(--irq); border-color: var(--irq); }
+.btn[hidden] { display: none; }
+.linkish { background: none; border: 0; padding: 0; color: var(--say); font: 500 13.5px var(--cond); cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
+
+/* ---------- inspector ---------- */
+aside { border-left: 1px solid var(--rule); background: var(--paper); overflow-y: auto; padding: 16px 18px 30px; }
+aside h2 { font: 600 15px var(--cond); margin: 18px 0 8px; display: flex; justify-content: space-between; align-items: baseline; }
+aside h2:first-of-type { margin-top: 0; }
+aside h2 small { font: 400 12.5px var(--cond); color: var(--ink3); }
+aside .explain { font-size: 13px; color: var(--ink2); margin: 0 0 8px; line-height: 1.45; }
+.sm { background: var(--sheet); border: 1px solid var(--rule); border-radius: 8px; padding: 6px; }
+.sm svg { width: 100%; display: block; }
+.sm .node rect { fill: var(--sheet); stroke: var(--rule); stroke-width: 1.2; transition: fill .2s, stroke .2s; }
+.sm .node text { font: 500 12px var(--cond); fill: var(--ink2); text-anchor: middle; dominant-baseline: central; }
+.sm .node.on rect { fill: var(--ink); stroke: var(--ink); }
+.sm .node.on text { fill: white; }
+.sm .node.on.irq rect { fill: var(--irq); stroke: var(--irq); }
+.sm .edge { stroke: #AAB6BF; stroke-width: 1.2; fill: none; }
+.sm .edge.hot { stroke: var(--ink); stroke-width: 2; }
+.sm .edge.hot.irq { stroke: var(--irq); }
+.ledger { list-style: none; margin: 0; padding: 0; background: var(--sheet); border: 1px solid var(--rule); border-radius: 8px; max-height: 300px; overflow-y: auto; }
+.ledger li { display: grid; grid-template-columns: 24px minmax(0, 1fr); gap: 6px; padding: 6px 10px; border-top: 1px solid var(--rule2); font-size: 13px; }
+.ledger li:first-child { border-top: 0; }
+.ledger li.fresh { animation: fresh 2.4s ease-out; }
+@keyframes fresh { from { background: #FFF3D6; } to { background: transparent; } }
+.ledger .ix { font: 400 12px var(--cond); color: var(--ink3); padding-top: 1px; }
+.ledger .hd { display: flex; gap: 6px; align-items: baseline; flex-wrap: wrap; font: 600 13px var(--cond); }
+.ledger .tag { font: 500 11.5px var(--cond); border-radius: 4px; padding: 0 5px; border: 1px solid; }
+.tag.partial { color: var(--irq); } .tag.synthetic { color: var(--think); } .tag.src { color: var(--ink3); border-color: transparent; padding: 0; }
+.ledger .blocks { font: 400 12px var(--cond); color: var(--ink2); }
+.ledger .pv { color: var(--ink2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ledger .emptyrow { color: var(--ink3); grid-column: 1 / -1; }
+.cache { background: var(--sheet); border: 1px solid var(--rule); border-radius: 8px; padding: 10px 12px; }
+.cache .bar { display: grid; grid-template-columns: 96px minmax(0, 1fr) 40px; gap: 8px; align-items: center; font: 400 12px var(--cond); color: var(--ink2); margin: 3px 0; }
+.cache .track { height: 9px; display: flex; background: var(--rule2); border-radius: 2px; overflow: hidden; }
+.cache .read { background: var(--say); } .cache .write { background: #9CCFD4; } .cache .rest { background: #9AA7B1; }
+.cache .total { font: 500 13px var(--cond); margin-top: 8px; color: var(--ink); }
+.cache .legend { display: flex; gap: 12px; font: 400 12px var(--cond); color: var(--ink3); margin-top: 6px; }
+.cache .legend i { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; }
+
+/* ---------- connection dialog ---------- */
+dialog { border: 1px solid var(--rule); border-radius: 10px; padding: 0; width: min(520px, 94vw); color: var(--ink); background: var(--sheet); }
+dialog::backdrop { background: rgba(21,33,42,.35); }
+dialog form { padding: 20px 22px; }
+dialog h3 { font: 600 20px var(--cond); margin: 0 0 14px; }
+.opt { display: grid; grid-template-columns: 20px 1fr; gap: 8px; padding: 10px 12px; border: 1px solid var(--rule); border-radius: 8px; margin-bottom: 8px; cursor: pointer; }
+.opt:has(input:checked) { border-color: var(--ink); background: var(--well); }
+.opt b { font: 600 15px var(--cond); display: block; }
+.opt span { font-size: 13.5px; color: var(--ink2); }
+.fields { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 10px 0 6px; }
+.fields label { font: 500 13px var(--cond); color: var(--ink2); display: grid; gap: 3px; }
+.fields label.wide { grid-column: 1 / -1; }
+.fields input { border: 1px solid var(--rule); border-radius: 6px; padding: 6px 9px; background: white; font-size: 14px; }
+dialog code { font: 13px var(--mono); background: var(--well); padding: 1px 5px; border-radius: 4px; }
+dialog .small { font-size: 13px; color: var(--ink2); margin: 8px 0 0; }
+dialog .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+
+/* ---------- responsive ---------- */
+@media (max-width: 980px) {
+  main { grid-template-columns: minmax(0, 1fr); }
+  aside { position: fixed; top: 0; right: 0; bottom: 0; width: min(400px, 92vw); z-index: 20; transform: translateX(100%); transition: transform .2s, visibility .2s; visibility: hidden; }
+  body.inspecting aside { transform: none; visibility: visible; box-shadow: -8px 0 30px rgba(21,33,42,.18); }
+  .close-inspect { display: inline-block; }
+  .inspect-toggle { display: inline-block; }
+  .model > span { display: none; }
+}
+@media (max-width: 640px) {
+  header { flex-wrap: wrap; gap: 8px 10px; padding: 8px 12px; }
+  header > .spacer { display: none; }
+  .inspect-toggle { order: 1; margin-left: auto; }
+  .conn { order: 2; flex: 1 1 0; min-width: 0; }
+  .model { order: 3; }
+  .model select { max-width: 150px; }
+  .trace { grid-template-columns: 64px minmax(0, 1fr); }
+  .lanes { padding-left: 10px; font-size: 11.5px; }
+  .col { padding: 0 16px; }
+  .empty h1 { font-size: 27px; }
+  .people { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  * { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+}
 </style>
 </head>
 <body>
 <header>
-  <h1>agent-loop <span id="sid"></span></h1>
-  <div class="chips" id="users"></div>
-  <select id="model" title="Switch model for everyone">
-    <option value="">switch model…</option>
-    <option>opus</option><option>sonnet</option><option>haiku</option><option>haiku-4.5</option>
-    <option>codex</option><option>gpt</option><option>gpt-mini</option>
-    <option>gemini</option><option>gemini-pro</option><option>mock</option>
-  </select>
-  <div id="status">connecting…</div>
-</header>
-<main id="scroll"><div class="col" id="log"></div></main>
-<footer>
-  <div class="col">
-    <textarea id="input" rows="1" placeholder="Message the agent… (Enter to send, Shift+Enter newline)"></textarea>
-    <button id="send">Send</button>
-    <button id="barge" class="secondary" title="Interrupt the running turn and send this now">Interrupt &amp; send</button>
-    <button id="stop" class="stop" disabled title="Esc">Stop</button>
+  <div class="brand">
+    <svg width="22" height="22" viewBox="0 0 22 22" aria-hidden="true"><path d="M4 11a7 7 0 1 1 7 7" fill="none" stroke="#15212A" stroke-width="2.2" stroke-linecap="round"/><path d="M11 18l-3.2-2.4M11 18l-2.4 3" stroke="#15212A" stroke-width="2.2" stroke-linecap="round"/><circle cx="4" cy="11" r="2.3" fill="#C8243A"/></svg>
+    agent-loop
   </div>
-  <div class="hint">Messages sent while the agent is working are queued and answered together. Anyone can press Stop (Esc).</div>
-</footer>
+  <button class="conn" id="conn" type="button" data-status="demo" aria-haspopup="dialog"><i class="dot"></i><span id="connText">Demo agent in your browser</span></button>
+  <div class="spacer"></div>
+  <label class="model"><span>Model</span><select id="model" aria-label="Model for the next turn"></select></label>
+  <div class="people" id="people" aria-label="People in this session"></div>
+  <button class="inspect-toggle" id="inspectToggle" type="button" aria-controls="inspector">Inspect loop</button>
+</header>
+
+<section class="trace" aria-label="Timeline of the current turn">
+  <div class="lanes" aria-hidden="true"><span class="cap">Turn</span><span>State</span><span>Thinking</span><span>Text</span><span>Tools</span></div>
+  <svg id="trace" role="img" aria-label="Turn timeline"></svg>
+</section>
+
+<main>
+  <section class="chat">
+    <div class="log" id="logScroll" aria-live="polite">
+      <div class="col" id="log"></div>
+    </div>
+    <form class="composer" id="composer">
+      <div class="col">
+        <label class="sr" for="input">Message</label>
+        <textarea id="input" rows="1" placeholder="Ask the agent to do something"></textarea>
+        <div class="row">
+          <span class="hint" id="asWrap">Sending as <select id="as" aria-label="Send as"></select></span>
+          <span class="hint" id="hint">Enter sends, Shift+Enter adds a line</span>
+          <button class="linkish" id="bobBtn" type="button" hidden>Queue a message from bob</button>
+          <div class="spacer"></div>
+          <button class="btn stop" id="stop" type="button" hidden>Stop</button>
+          <button class="btn ghost" id="barge" type="button" hidden>Interrupt and send</button>
+          <button class="btn" id="send" type="submit">Send</button>
+        </div>
+      </div>
+    </form>
+  </section>
+
+  <aside id="inspector" aria-label="Inside the loop">
+    <button class="btn ghost close-inspect" id="closeInspect" type="button">Close</button>
+    <h2>Loop state <small id="smLabel">idle</small></h2>
+    <div class="sm"><svg id="sm" viewBox="0 0 332 176" role="img" aria-label="Loop state machine"></svg></div>
+
+    <h2>Context sent to the model <small id="ledgerCount">0 messages</small></h2>
+    <p class="explain">The conversation exactly as the loop stores it. After an interrupt, watch the partial reply and the interrupt note appear here.</p>
+    <ul class="ledger" id="ledger"></ul>
+
+    <h2>Prompt cache <small id="cacheLabel">no calls yet</small></h2>
+    <div class="cache" id="cache"></div>
+  </aside>
+</main>
+
+<dialog id="connDialog">
+  <form method="dialog" id="connForm">
+    <h3>Connect</h3>
+    <label class="opt"><input type="radio" name="mode" value="demo"><div><b>Demo agent</b><span>Runs inside this page with a pretend project. No keys, nothing leaves your browser. Same events and interrupt rules as the real loop.</span></div></label>
+    <label class="opt"><input type="radio" name="mode" value="server"><div><b>My agent-server</b><span>The real loop with Claude, OpenAI and Gemini, running on your machine or a server you control.</span></div></label>
+    <div class="fields">
+      <label class="wide">Server address<input id="fServer" placeholder="ws://127.0.0.1:8000" autocomplete="off"></label>
+      <label>Session<input id="fSession" placeholder="demo" autocomplete="off"></label>
+      <label>Your name<input id="fUser" placeholder="alice" autocomplete="off"></label>
+    </div>
+    <p class="small">Start a server with <code>uv run agent-server --workdir ./sandbox</code>. Chrome may ask to let this page reach your local network; allow it. Anyone who opens the same session joins the same conversation.</p>
+    <div class="actions"><button class="btn ghost" value="cancel" type="submit">Cancel</button><button class="btn" value="ok" type="submit" id="connectBtn">Connect</button></div>
+  </form>
+</dialog>
+
 <script>
+"use strict";
+/* =====================================================================
+   Shared vocabulary
+   ===================================================================== */
+const MODELS = {
+  opus: ["anthropic", "claude-opus-5-5"], sonnet: ["anthropic", "claude-sonnet-5-5"], haiku: ["anthropic", "claude-haiku-5-5"],
+  "haiku-4.5": ["anthropic", "claude-haiku-4-5"], codex: ["openai", "gpt-5.3-codex"], gpt: ["openai", "gpt-5.5"],
+  "gpt-mini": ["openai", "gpt-5.4-mini"], gemini: ["gemini", "gemini-3.5-flash"], "gemini-pro": ["gemini", "gemini-3.1-pro-preview"],
+  mock: ["mock", "mock-1"],
+};
+const PROVIDER_NAMES = { anthropic: "Claude", openai: "OpenAI", gemini: "Gemini", mock: "Mock" };
+const MODEL_NAMES = {
+  "claude-opus-5-5": "Claude Opus 5.5", "claude-sonnet-5-5": "Claude Sonnet 5.5", "claude-haiku-5-5": "Claude Haiku 5.5",
+  "claude-haiku-4-5": "Claude Haiku 4.5", "gpt-5.3-codex": "GPT-5.3 Codex", "gpt-5.5": "GPT-5.5", "gpt-5.4-mini": "GPT-5.4 mini",
+  "gemini-3.5-flash": "Gemini 3.5 Flash", "gemini-3.1-pro-preview": "Gemini 3.1 Pro", "mock-1": "Mock model",
+};
+const modelName = (m) => MODEL_NAMES[m] || m;
+const PEOPLE_COLORS = ["#14707C", "#6A5CC4", "#A3670A", "#2C7A4B", "#B2446E", "#3E63A8"];
+const colorFor = (name) => PEOPLE_COLORS[[...name].reduce((a, c) => a + c.charCodeAt(0), 0) % PEOPLE_COLORS.length];
+
+const $ = (s) => document.querySelector(s);
+function h(tag, attrs, ...kids) {
+  const el = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (v == null || v === false) continue;
+    if (k === "class") el.className = v; else if (k === "text") el.textContent = v; else el.setAttribute(k, v === true ? "" : v);
+  }
+  for (const k of kids.flat()) if (k != null) el.append(k.nodeType ? k : document.createTextNode(k));
+  return el;
+}
+const store = { get(k, d) { try { return localStorage.getItem("agent-loop:" + k) ?? d; } catch { return d; } },
+                set(k, v) { try { localStorage.setItem("agent-loop:" + k, v); } catch {} } };
+
+/* =====================================================================
+   Demo backend: a simulated agent that speaks the agent-server protocol.
+   It mirrors the Python loop's rules: partial text is kept, unsigned
+   thinking is discarded, every tool call gets exactly one result, and an
+   interrupt note is appended. Messages sent while busy are queued and
+   coalesced into one turn.
+   ===================================================================== */
+const sleep = (ms, signal) => new Promise((res, rej) => {
+  if (signal?.aborted) return rej(new DOMException("Aborted", "AbortError"));
+  const t = setTimeout(res, ms);
+  signal?.addEventListener("abort", () => { clearTimeout(t); rej(new DOMException("Aborted", "AbortError")); }, { once: true });
+});
+const uid = () => "call_" + Math.random().toString(36).slice(2, 10);
+
+const BUGGY = `def fizzbuzz(n):
+    out = []
+    for i in range(1, n + 1):
+        if i % 3 == 0:
+            out.append("Fizz")
+        elif i % 5 == 0:
+            out.append("Buzz")
+        elif i % 15 == 0:
+            out.append("FizzBuzz")
+        else:
+            out.append(str(i))
+    return out
+
+
+if __name__ == "__main__":
+    print("\\n".join(fizzbuzz(15)))
+`;
+const OLD_BRANCH = `        if i % 3 == 0:
+            out.append("Fizz")
+        elif i % 5 == 0:
+            out.append("Buzz")
+        elif i % 15 == 0:
+            out.append("FizzBuzz")`;
+const NEW_BRANCH = `        if i % 15 == 0:
+            out.append("FizzBuzz")
+        elif i % 3 == 0:
+            out.append("Fizz")
+        elif i % 5 == 0:
+            out.append("Buzz")`;
+const TESTS = `from fizzbuzz import fizzbuzz
+
+
+def test_three_is_fizz():
+    assert fizzbuzz(3)[-1] == "Fizz"
+
+
+def test_five_is_buzz():
+    assert fizzbuzz(5)[-1] == "Buzz"
+
+
+def test_fifteen_is_fizzbuzz():
+    assert fizzbuzz(15)[-1] == "FizzBuzz"
+`;
+const EXPLAIN = `Interrupting is the part of an agent loop that is easy to get almost right. The loop has one way to stop: cancel the task that is running the turn. Wherever the turn is waiting at that moment (reading the model's stream, waiting on a shell command, sleeping before a retry) the cancellation lands there, and one cleanup step looks at what was in flight.
+
+Text that already reached your screen is kept as a partial reply, because you saw it and the model should know you saw it. Thinking that was still streaming is dropped: it has no signature yet, so no provider would accept it back. A tool call that finished keeps its real result. A tool that was still running is killed, along with any child processes, and the model is told it was killed and that its side effects may be partial. Tool calls that never started are reported as not run. Then a short note tells the model you interrupted, and the loop returns to idle.
+
+The result is a history that every provider accepts on the next call, which is why you can stop Claude halfway through a command, switch to GPT or Gemini, and carry on. Try it: press Stop while this paragraph is still streaming, then look at the context panel on the right.`;
+
+class DemoServer {
+  constructor() {
+    this.subs = new Map();
+    this.messages = [];
+    this.loopState = "idle";
+    this.provider = "anthropic"; this.model = "claude-opus-5-5";
+    this.queue = []; this.current = null;
+    this.fs = { "fizzbuzz.py": BUGGY, "test_fizzbuzz.py": TESTS, "README.md": "# fizzbuzz\n\nA tiny project for the demo agent to work on.\n" };
+    this.cache = { model: null, prefix: 0 };
+    this.lastInterrupt = null;
+  }
+  attach(user, cb) {
+    this.subs.set(user, cb);
+    cb(this.snapshot());
+    this.broadcast({ type: "presence", users: this.users(), joined: user });
+  }
+  users() { return [...new Set([...this.subs.keys(), "bob"])].sort(); }
+  snapshot() {
+    return { type: "snapshot", session_id: "demo", providers: ["anthropic", "openai", "gemini", "mock"], models: MODELS,
+             users: this.users(), queued: this.queue.length,
+             state: { state: this.loopState, active_provider: this.provider, active_model: this.model, messages: structuredClone(this.messages) } };
+  }
+  broadcast(ev) { for (const cb of this.subs.values()) cb(structuredClone(ev)); }
+  receive(user, msg) {
+    if (msg.type === "message" && msg.text?.trim()) this.submit(msg.author || user, msg.text.trim(), !!msg.interrupt);
+    else if (msg.type === "interrupt") this.interrupt(user);
+    else if (msg.type === "switch") this.switchTo(msg.alias, user);
+    else if (msg.type === "sync") this.subs.get(user)?.(this.snapshot());
+  }
+  switchTo(alias, by) {
+    const m = MODELS[alias];
+    if (!m) return this.broadcast({ type: "notice", text: `Unknown model ${alias}.` });
+    const before = this.provider;
+    [this.provider, this.model] = m;
+    this.broadcast({ type: "provider_switched", by, provider: this.provider, model: this.model });
+    const foreign = this.messages.some((x) => x.content.some((b) => b.type === "thinking" && b.provider && b.provider !== this.provider));
+    if (foreign && before !== this.provider)
+      this.broadcast({ type: "notice", text: `Earlier reasoning from other providers stays in history but isn't sent to ${PROVIDER_NAMES[this.provider]}: it can't read it. Text, tool calls and results carry over.` });
+  }
+  async submit(author, text, interrupt) {
+    const queued = !!this.current || this.queue.length > 0;
+    this.queue.push({ author, text });
+    this.broadcast({ type: "user_message", author, text, queued: queued && !interrupt });
+    if (interrupt) await this.interrupt(author);
+    this.pump();
+  }
+  async interrupt(by) {
+    if (!this.current) return false;
+    this.current.by = by;
+    this.current.ctl.abort();
+    await this.current.done;
+    return true;
+  }
+  async pump() {
+    if (this.pumping) return;
+    this.pumping = true;
+    try {
+      while (this.queue.length) {
+        if (this.current) await this.current.done;
+        const batch = this.queue.splice(0);
+        await this.runTurn(batch);
+      }
+    } finally { this.pumping = false; }
+  }
+  tokens() { return 1650 + Math.round(JSON.stringify(this.messages).length / 4); }
+  usage() {
+    const total = this.tokens();
+    const same = this.cache.model === this.model;
+    let read = 0, write = 0, input = total;
+    if (this.provider === "anthropic") { read = same ? Math.min(this.cache.prefix, total) : 0; write = total - read; input = 0; }
+    else if (this.provider !== "mock") { read = same ? Math.floor(Math.min(this.cache.prefix, total) / 128) * 128 : 0; if (read < 1024) read = 0; }
+    this.cache = { model: this.model, prefix: total };
+    return { type: "usage", provider: this.provider, model: this.model, input_tokens: input, output_tokens: 40 + Math.round(Math.random() * 160),
+             cache_read_tokens: read, cache_write_tokens: write, reasoning_tokens: this.provider === "openai" ? 64 : 0 };
+  }
+  async runTurn(batch) {
+    const authors = [...new Set(batch.map((b) => b.author))];
+    const text = batch.map((b) => `${b.author}: ${b.text}`).join("\n");
+    this.messages.push({ role: "user", content: [{ type: "text", text }], author: authors.join(", "), partial: false, synthetic: false });
+    const ctl = new AbortController();
+    let finish; const done = new Promise((r) => (finish = r));
+    this.current = { ctl, by: null, done };
+    const ctx = { streamOpen: false, partialText: "", thinkingChars: 0, partialCalls: 0, pending: [], results: {}, running: null, started: 0, buf: { out: "" } };
+    const s = ctl.signal;
+    this.loopState = "streaming";
+    this.broadcast({ type: "turn_started", authors, provider: this.provider, model: this.model });
+    let iterations = 0;
+    try {
+      for (;;) {
+        iterations++;
+        const step = demoAgent(this, batch);
+        ctx.streamOpen = true; ctx.partialText = ""; ctx.thinkingChars = 0; ctx.partialCalls = 0;
+        const blocks = [];
+        const thinking = this.provider === "mock" ? "" : this.provider === "openai" ? step.thinking.split(". ")[0] + "." : step.thinking;
+        await sleep(this.provider === "openai" ? 500 : 260, s);
+        if (thinking) {
+          for (const w of thinking.split(" ")) { await sleep(28, s); ctx.thinkingChars += w.length + 1; this.broadcast({ type: "thinking_delta", text: w + " " }); }
+          blocks.push({ type: "thinking", text: thinking, provider: this.provider });
+        }
+        if (step.text) {
+          for (const w of step.text.split(/(?<=\s)/)) { await sleep(32, s); ctx.partialText += w; this.broadcast({ type: "text_delta", text: w }); }
+          blocks.push({ type: "text", text: step.text });
+        }
+        const calls = (step.calls || []).map(([tool_name, input]) => ({ type: "tool_use", id: uid(), tool_name, input }));
+        for (const c of calls) { await sleep(160, s); ctx.partialCalls++; this.broadcast({ type: "tool_call_start", id: c.id, tool_name: c.tool_name }); blocks.push(c); }
+        this.broadcast(this.usage());
+        const msg = { role: "assistant", content: blocks, provider: this.provider, model: this.model, partial: false, synthetic: false };
+        this.messages.push(msg);
+        ctx.streamOpen = false;
+        this.broadcast({ type: "message_complete", message: structuredClone(msg) });
+        if (!calls.length) {
+          this.loopState = "done";
+          this.broadcast({ type: "turn_ended", reason: "completed", iterations });
+          break;
+        }
+        ctx.pending = calls; ctx.results = {};
+        this.loopState = "tool_running";
+        for (const c of calls) {
+          this.broadcast({ type: "tool_exec_start", id: c.id, tool_name: c.tool_name, input: c.input });
+          ctx.running = c; ctx.started = performance.now(); ctx.buf = { out: "" };
+          const r = await runDemoTool(this, c, s, ctx.buf);
+          const res = { type: "tool_result", tool_use_id: c.id, tool_name: c.tool_name, output: r.output, is_error: r.is_error };
+          ctx.results[c.id] = res; ctx.running = null;
+          this.broadcast({ type: "tool_exec_end", id: c.id, tool_name: c.tool_name, output: r.output, is_error: r.is_error,
+                           duration_s: +((performance.now() - ctx.started) / 1000).toFixed(2) });
+        }
+        this.messages.push({ role: "tool", content: calls.map((c) => ctx.results[c.id]), partial: false, synthetic: false });
+        ctx.pending = [];
+        this.loopState = "streaming";
+      }
+    } catch (err) {
+      if (err.name !== "AbortError") throw err;
+      this.reconcile(ctx, this.current.by || "someone");
+    } finally {
+      this.current = null;
+      finish();
+    }
+  }
+  reconcile(ctx, by) {
+    const phase = ctx.running ? `tool execution (${ctx.running.tool_name})` : ctx.pending.length ? "tool execution" : "model streaming";
+    const sum = { phase, kept_partial_text_chars: 0, discarded: [], completed_tools: [], killed_tools: [], skipped_tools: [] };
+    if (ctx.streamOpen) {
+      const t = ctx.partialText.trimEnd();
+      if (t) { this.messages.push({ role: "assistant", content: [{ type: "text", text: t }], partial: true, synthetic: false, provider: this.provider, model: this.model }); sum.kept_partial_text_chars = t.length; }
+      if (ctx.thinkingChars) sum.discarded.push(`${ctx.thinkingChars} chars of unsigned partial thinking`);
+      if (ctx.partialCalls) sum.discarded.push(`${ctx.partialCalls} half-streamed tool call(s), never executed`);
+    }
+    if (ctx.pending.length) {
+      const results = ctx.pending.map((c) => {
+        const label = `${c.tool_name}#${c.id.slice(-6)}`;
+        if (ctx.results[c.id]) { sum.completed_tools.push(label); return ctx.results[c.id]; }
+        if (ctx.running && ctx.running.id === c.id) {
+          const secs = ((performance.now() - ctx.started) / 1000).toFixed(1);
+          sum.killed_tools.push(`${label} after ${secs}s`);
+          return { type: "tool_result", tool_use_id: c.id, tool_name: c.tool_name, is_error: true,
+                   output: `Interrupted by the user after ${secs}s; the command was killed and any side effects may be partial.\n${ctx.buf.out}[interrupted; process killed]` };
+        }
+        sum.skipped_tools.push(label);
+        return { type: "tool_result", tool_use_id: c.id, tool_name: c.tool_name, is_error: true, output: "Not executed: the user interrupted before this tool call ran." };
+      });
+      this.messages.push({ role: "tool", content: results, partial: false, synthetic: false });
+    }
+    const where = sum.killed_tools.length ? " while a tool was running" : "";
+    this.messages.push({ role: "user", synthetic: true, partial: false, content: [{ type: "text",
+      text: `[The user interrupted the previous response${where}. Anything above that was cut off is incomplete. Do not resume the interrupted work unless the user asks you to; respond to the user's next message.]` }] });
+    this.lastInterrupt = { ...sum, by };
+    this.loopState = "idle";
+    this.broadcast({ type: "turn_interrupted", by, summary: sum });
+    this.broadcast({ type: "turn_ended", reason: "interrupted", iterations: 0 });
+  }
+}
+
+function isFixed(fs) { const s = fs["fizzbuzz.py"] || ""; return s.includes("% 15") && s.indexOf("% 15") < s.indexOf("% 3 "); }
+function fizz(n, fixed) {
+  const out = [];
+  for (let i = 1; i <= n; i++) {
+    if (fixed && i % 15 === 0) out.push("FizzBuzz");
+    else if (i % 3 === 0) out.push("Fizz");
+    else if (i % 5 === 0) out.push("Buzz");
+    else if (i % 15 === 0) out.push("FizzBuzz");
+    else out.push(String(i));
+  }
+  return out;
+}
+
+async function runDemoTool(srv, call, signal, buf) {
+  const fs = srv.fs, a = call.input;
+  const emit = (s) => { buf.out += s; };
+  if (call.tool_name === "file_read") {
+    await sleep(140, signal);
+    if (!(a.path in fs)) return { output: `No such file: ${a.path}`, is_error: true };
+    return { output: fs[a.path], is_error: false };
+  }
+  if (call.tool_name === "file_edit") {
+    await sleep(220, signal);
+    if (a.content != null) { const existed = a.path in fs; fs[a.path] = a.content; return { output: `${existed ? "Overwrote" : "Created"} ${a.path}`, is_error: false }; }
+    const cur = fs[a.path];
+    if (cur == null) return { output: `No such file: ${a.path}`, is_error: true };
+    if (!cur.includes(a.old_string)) return { output: `old_string not found in ${a.path}`, is_error: true };
+    fs[a.path] = cur.replace(a.old_string, a.new_string);
+    return { output: `Edited ${a.path}: replaced 1 occurrence(s)`, is_error: false };
+  }
+  // bash: a tiny pretend shell over the pretend project
+  const cmd = (a.command || "").trim();
+  let code = 0;
+  for (const part of cmd.split(/\s*(?:&&|;)\s*/).filter(Boolean)) {
+    const [bin, ...args] = part.split(/\s+/);
+    if (bin === "ls") { await sleep(120, signal); emit(Object.keys(fs).sort().map((f) => (args.includes("-la") || args.includes("-l") ? `-rw-r--r--  1 you  staff  ${String(fs[f].length).padStart(5)}  ${f}` : f)).join("\n") + "\n"); }
+    else if (bin === "cat") { await sleep(100, signal); const f = args[0]; if (f in fs) emit(fs[f]); else { emit(`cat: ${f}: No such file or directory\n`); code = 1; } }
+    else if (bin === "echo") { await sleep(60, signal); emit(args.join(" ").replace(/^["']|["']$/g, "") + "\n"); }
+    else if (bin === "sleep") { const n = Math.min(parseFloat(args[0]) || 1, 120); await sleep(n * 1000, signal); }
+    else if (bin === "python" || bin === "python3") {
+      await sleep(700, signal);
+      if (!("fizzbuzz.py" in fs)) { emit("python: can't open file 'fizzbuzz.py'\n"); code = 2; }
+      else emit(fizz(15, isFixed(fs)).join("\n") + "\n");
+    }
+    else if (bin === "pytest") {
+      const ok = isFixed(fs);
+      emit("============================= test session starts ==============================\nplatform linux, python 3.12, pytest 8.3\ncollected 3 items\n\ntest_fizzbuzz.py ");
+      for (const mark of ["." , ".", ok ? "." : "F"]) { await sleep(1300, signal); emit(mark); }
+      await sleep(900, signal);
+      emit("                                                     [100%]\n");
+      if (ok) emit("============================== 3 passed in 4.61s ===============================\n");
+      else { emit("=================================== FAILURES ===================================\n___________________________ test_fifteen_is_fizzbuzz ___________________________\n    assert fizzbuzz(15)[-1] == \"FizzBuzz\"\nE   AssertionError: assert 'Fizz' == 'FizzBuzz'\n========================= 1 failed, 2 passed in 4.63s ==========================\n"); code = 1; }
+    }
+    else { await sleep(80, signal); emit(`bash: ${bin}: command not found (the demo shell knows ls, cat, echo, sleep, python and pytest)\n`); code = 127; }
+  }
+  return { output: (buf.out.replace(/\n$/, "") + `\n[exit code ${code}]`).replace(/^\n/, ""), is_error: code !== 0 };
+}
+
+/* The pretend model: decides its next step from the conversation so far,
+   the same way a real model would, so interrupts and "continue" behave. */
+function demoAgent(srv, batch) {
+  const msgs = srv.messages;
+  let lastUser = msgs.length - 1;
+  while (lastUser >= 0 && !(msgs[lastUser].role === "user" && !msgs[lastUser].synthetic)) lastUser--;
+  const userText = msgs[lastUser]?.content[0]?.text || "";
+  const ask = userText.replace(/^[\w.-]+: /gm, "").toLowerCase();
+  const since = msgs.slice(lastUser + 1);
+  const calls = since.flatMap((m) => m.content.filter((b) => b.type === "tool_use"));
+  const did = (pred) => calls.some(pred);
+  const lastResult = [...since].reverse().find((m) => m.role === "tool")?.content.at(-1);
+  const authors = [...new Set(batch.map((b) => b.author))];
+  const multi = authors.length > 1;
+  const intro = multi && !calls.length ? `${authors.join(" and ")} both sent messages while I was busy, so I'm answering them together. ` : "";
+  let goal = ask;
+  if (/^\s*(continue|go on|resume|keep going)/.test(ask)) {
+    let prev = lastUser - 1;
+    while (prev >= 0 && !(msgs[prev].role === "user" && !msgs[prev].synthetic)) prev--;
+    goal = (msgs[prev]?.content[0]?.text || "").toLowerCase() + " " + ask;
+  }
+
+  if (/what happened|why did|where were|what did you|status|interrupt(ed)? (you|me)/.test(ask) && srv.lastInterrupt) {
+    const s = srv.lastInterrupt;
+    const parts = [`${s.by === "someone" ? "Someone" : s.by} stopped me during ${s.phase}.`];
+    if (s.kept_partial_text_chars) parts.push(`I had written ${s.kept_partial_text_chars} characters of a reply; that partial text is still in my context, marked as cut off.`);
+    if (s.completed_tools.length) parts.push(`These calls finished before the stop, so their effects are real: ${s.completed_tools.join(", ")}.`);
+    if (s.killed_tools.length) parts.push(`This one was killed while running: ${s.killed_tools.join(", ")}. I can see what it printed before it stopped, and anything it was doing may be half done.`);
+    if (s.skipped_tools.length) parts.push(`These never ran: ${s.skipped_tools.join(", ")}.`);
+    if (s.discarded.length) parts.push(`I dropped ${s.discarded.join(" and ")}.`);
+    parts.push("Say \"continue\" and I'll pick up from here.");
+    return { thinking: "The user is asking what happened. The interrupt note and the tool results in my context tell me exactly which steps finished.", text: parts.join(" ") };
+  }
+
+  if (/fix|bug|broken|fizz/.test(goal)) {
+    const fixed = isFixed(srv.fs);
+    const wantsDoc = /docstring|document/.test(goal);
+    if (!did((c) => c.tool_name === "file_read")) return { thinking: "Before changing anything I should read fizzbuzz.py and see how the branches are ordered.", text: intro + "I'll start by reading the file.", calls: [["file_read", { path: "fizzbuzz.py" }]] };
+    if (!fixed && !did((c) => c.input.command === "python fizzbuzz.py")) return { thinking: "The 15 check comes after the 3 and 5 checks, so it can never run. Let me confirm by running it.", text: "The `% 15` branch is checked last, which looks unreachable. Running it to confirm:", calls: [["bash", { command: "python fizzbuzz.py" }]] };
+    if (!fixed) return { thinking: "Confirmed: 15 prints Fizz. Moving the 15 check first fixes it with a minimal edit.", text: "Confirmed: 15 prints `Fizz`. I'll move the `% 15` check to the top.", calls: [["file_edit", { path: "fizzbuzz.py", old_string: OLD_BRANCH, new_string: NEW_BRANCH }]] };
+    if (!did((c) => c.input.command === "pytest -q")) return { thinking: "The edit is in. Run the test suite to verify, including the fifteen case.", text: "Now the tests:", calls: [["bash", { command: "pytest -q" }]] };
+    if (wantsDoc && !srv.fs["fizzbuzz.py"].includes('"""')) return { thinking: "Bob also asked for a docstring.", text: "Tests pass. Adding the docstring bob asked for:", calls: [["file_edit", { path: "fizzbuzz.py", old_string: "def fizzbuzz(n):\n", new_string: 'def fizzbuzz(n):\n    """Return the FizzBuzz strings for 1..n."""\n' }]] };
+    const passed = lastResult && !lastResult.is_error;
+    return { thinking: "Summarize what changed and how it was verified.", text: passed || isFixed(srv.fs)
+      ? `Fixed. The \`i % 15 == 0\` branch was checked after \`% 3\` and \`% 5\`, so it never ran and 15 printed \`Fizz\`. It now comes first, and all three tests pass.${wantsDoc ? " The docstring is in too." : ""}`
+      : "The fix is in place but the tests still fail. Want me to look again?" };
+  }
+  if (/docstring/.test(goal)) {
+    if (srv.fs["fizzbuzz.py"].includes('"""')) return { thinking: "Already documented.", text: intro + "fizzbuzz() already has a docstring." };
+    if (!did((c) => c.tool_name === "file_edit")) return { thinking: "Add a one-line docstring.", text: intro + "Adding a docstring to `fizzbuzz()`.", calls: [["file_edit", { path: "fizzbuzz.py", old_string: "def fizzbuzz(n):\n", new_string: 'def fizzbuzz(n):\n    """Return the FizzBuzz strings for 1..n."""\n' }]] };
+    return { thinking: "Done.", text: "Added the docstring." };
+  }
+  if (/test|pytest/.test(goal)) {
+    if (!did((c) => c.input.command === "pytest -q")) return { thinking: "Run the suite. It takes a few seconds, which is a good moment to try stopping a running tool.", text: intro + "Running the test suite. It takes about five seconds; press Stop while it runs to see a tool get killed.", calls: [["bash", { command: "pytest -q" }]] };
+    return { thinking: "Report the result.", text: isFixed(srv.fs) ? "All three tests pass." : "One test fails: `fizzbuzz(15)` returns `Fizz` instead of `FizzBuzz`. Ask me to fix the bug and I'll handle it." };
+  }
+  if (/explain|how do|how does|interrupt/.test(goal)) return { thinking: "They want the interrupt design explained. A longer answer also gives them time to try stopping me mid-stream.", text: intro + EXPLAIN };
+  const bang = userText.split("\n").map((l) => l.replace(/^[\w.-]+: /, "")).find((l) => l.startsWith("!"));
+  if (bang || /\b(ls|list|files)\b/.test(goal)) {
+    const command = bang ? bang.slice(1).trim() : "ls -la";
+    if (!calls.length) return { thinking: `Run \`${command}\` in the project.`, text: intro + `Running \`${command}\`.`, calls: [["bash", { command }]] };
+    return { thinking: "Report the output briefly.", text: lastResult?.is_error ? "That command failed; the output is above." : "Done. The output is above." };
+  }
+  return { thinking: "This is a short open question. Point them at things the demo project can show.", text: intro +
+    "I'm the demo agent: a stand-in that runs in this page, with a small Python project to work on. Ask me to fix the bug in fizzbuzz.py, run the tests, or explain how interrupts work, and press Stop at any moment. Connect your own agent-server to talk to Claude, GPT or Gemini instead." };
+}
+
+/* =====================================================================
+   Transports
+   ===================================================================== */
+class DemoTransport {
+  constructor(user, onEvent) {
+    DemoTransport.server ||= new DemoServer();
+    this.user = user;
+    setTimeout(() => { DemoTransport.server.attach(user, onEvent); onStatus("demo"); }, 0);
+  }
+  send(msg) { DemoTransport.server.receive(this.user, msg); }
+  close() { DemoTransport.server.subs.delete(this.user); }
+}
+class WSTransport {
+  constructor(base, session, user, onEvent) {
+    this.url = `${base.replace(/\/+$/, "")}/ws/${encodeURIComponent(session)}?user=${encodeURIComponent(user)}`;
+    this.onEvent = onEvent; this.closed = false; this.retry = 0; this.open();
+  }
+  open() {
+    onStatus("connecting");
+    let ws;
+    try { ws = new WebSocket(this.url); } catch (e) { onStatus("down", String(e.message || e)); return; }
+    this.ws = ws;
+    ws.onopen = () => { this.retry = 0; onStatus("live"); };
+    ws.onmessage = (m) => this.onEvent(JSON.parse(m.data));
+    ws.onclose = () => { if (this.closed) return; onStatus("down"); setTimeout(() => this.open(), Math.min(8000, 800 * 2 ** this.retry++)); };
+  }
+  send(msg) { if (this.ws?.readyState === 1) this.ws.send(JSON.stringify(msg)); else flash("Not connected to the server yet."); }
+  close() { this.closed = true; this.ws?.close(); }
+}
+
+/* =====================================================================
+   App state + rendering
+   ===================================================================== */
 const params = new URLSearchParams(location.search);
-const sid = params.get("session") || "demo";
-const me = params.get("user") || ("user" + Math.floor(Math.random() * 1000));
-document.getElementById("sid").textContent = `· session ${sid} · you are ${me}`;
-const $log = document.getElementById("log"), $scroll = document.getElementById("scroll");
-const $input = document.getElementById("input"), $status = document.getElementById("status");
-const $stop = document.getElementById("stop");
-let turn = null, busy = false;
+const servedByAgentServer = /^https?:$/.test(location.protocol) && !location.hostname.endsWith("github.io") && params.get("mode") !== "demo";
+const cfg = {
+  mode: params.get("mode") || (params.get("server") ? "server" : servedByAgentServer ? "server" : store.get("mode", "demo")),
+  server: params.get("server") || (servedByAgentServer ? `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}` : store.get("server", "ws://127.0.0.1:8000")),
+  session: params.get("session") || store.get("session", "demo"),
+  user: params.get("user") || store.get("user", "alice"),
+};
+const app = { transport: null, me: cfg.user, users: [], busy: false, loopState: "idle", provider: "", model: "", turn: null,
+              trace: null, usage: [], messages: [], seen: 0, synced: false, turnNo: 0, available: [] };
 
-const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
-const stick = () => { const near = $scroll.scrollHeight - $scroll.scrollTop - $scroll.clientHeight < 120; return () => { if (near) $scroll.scrollTop = $scroll.scrollHeight; }; };
-function add(node) { const s = stick(); $log.appendChild(node); s(); return node; }
-function sys(text, cls = "sys") { return add(el("div", cls, text)); }
-function setBusy(b) { busy = b; $stop.disabled = !b; $status.textContent = b ? "agent working…" : "idle"; $status.className = b ? "busy" : ""; }
+function onStatus(s, detail) {
+  const el = $("#conn");
+  el.dataset.status = s === "connecting" ? "down" : s;
+  $("#connText").textContent = s === "demo" ? "Demo agent in your browser"
+    : s === "live" ? `Connected to ${cfg.server.replace(/^wss?:\/\//, "")}, session ${cfg.session}`
+    : s === "connecting" ? `Connecting to ${cfg.server.replace(/^wss?:\/\//, "")}…`
+    : `Can't reach ${cfg.server.replace(/^wss?:\/\//, "")}. Retrying`;
+  if (detail) flash(detail);
+}
 
-function userMsg(author, text, queued) {
-  const m = el("div", "msg user" + (queued ? " queued" : ""));
-  m.appendChild(el("div", "who", author + (queued ? " · queued" : "")));
-  m.appendChild(el("div", "body", text));
-  return add(m);
+function connect() {
+  app.transport?.close();
+  app.me = cfg.user; app.synced = false; app.messages = []; app.usage = []; app.trace = null; app.turn = null;
+  $("#log").replaceChildren();
+  renderAll();
+  const handler = (e) => handle(e);
+  app.transport = cfg.mode === "demo" ? new DemoTransport(cfg.user, handler) : new WSTransport(cfg.server, cfg.session, cfg.user, handler);
+  const demo = cfg.mode === "demo";
+  $("#asWrap").hidden = !demo;
+  if (demo) { $("#as").replaceChildren(...["alice", "bob"].map((n) => h("option", { value: n, text: n }))); $("#as").value = cfg.user === "bob" ? "bob" : "alice"; }
 }
-function newTurn(label) {
-  const m = el("div", "msg assistant");
-  m.appendChild(el("div", "who", label));
-  add(m);
-  turn = { root: m, text: null, thinking: null, tools: {} };
-  return turn;
+const send = (msg) => app.transport.send(msg);
+let syncTimer = null;
+const syncSoon = () => { clearTimeout(syncTimer); syncTimer = setTimeout(() => send({ type: "sync" }), 120); };
+
+/* ---------- events ---------- */
+function handle(e) {
+  switch (e.type) {
+    case "snapshot": {
+      app.provider = e.state.active_provider; app.model = e.state.active_model;
+      app.available = e.providers || []; app.models = e.models || MODELS; app.users = e.users || [];
+      setLoop(e.state.state);
+      app.busy = e.state.state === "streaming" || e.state.state === "tool_running";
+      if (!app.synced) { renderHistory(e.state.messages); app.synced = true; }
+      setLedger(e.state.messages);
+      renderModels(); renderPeople(); renderControls();
+      break;
+    }
+    case "presence": app.users = e.users; renderPeople(); if (e.joined && e.joined !== app.me && app.synced && cfg.mode !== "demo") note(`${e.joined} joined`); if (e.left) note(`${e.left} left`); break;
+    case "user_message": clearEmpty(); userBubble(e.author, e.text, e.queued); scrollDown(); break;
+    case "turn_started":
+      app.busy = true; app.turnNo++;
+      document.querySelectorAll(".u.queued").forEach((n) => { n.classList.remove("queued"); n.querySelector("i")?.remove(); });
+      app.turn = newTurn(e.provider, e.model, e.authors);
+      app.trace = { start: performance.now(), end: null, label: `Turn ${app.turnNo} on ${modelName(e.model)}`, irq: null, irqBy: "",
+                    lanes: { state: [], think: [], say: [], tool: [] } };
+      traceOpen("state", "streaming"); setLoop("streaming"); renderControls(); break;
+    case "thinking_delta": traceOpen("think"); traceClose("say"); thinkSeg().textContent += e.text; bumpThinking(); scrollDown(); break;
+    case "text_delta": traceOpen("say"); traceClose("think"); appendProse(e.text); scrollDown(); break;
+    case "message_complete": traceClose("think"); traceClose("say"); if (app.turn) { app.turn.prose = null; app.turn.think = null; } syncSoon(); break;
+    case "tool_exec_start": traceClose("think"); traceClose("say"); traceClose("state"); traceOpen("state", "tool"); traceOpen("tool", e.tool_name, true);
+      toolCard(e.id, e.tool_name, e.input); setLoop("tool_running"); scrollDown(); break;
+    case "tool_exec_end": traceClose("tool"); traceClose("state"); traceOpen("state", "streaming"); toolDone(e); setLoop("streaming"); syncSoon(); break;
+    case "usage": app.usage.push(e); if (app.turn) app.turn.calls.push(e); renderCache(); break;
+    case "retrying": {
+      if (e.discarded_partial && app.turn?.prose) app.turn.prose.classList.add("discarded");
+      if (app.turn) app.turn.prose = null;
+      turnRoot().append(h("div", { class: "banner" }, `Retrying in ${e.delay_s}s (attempt ${e.attempt}): ${e.error}`)); break;
+    }
+    case "notice": turnRoot().append(h("div", { class: "banner" }, e.text)); scrollDown(); break;
+    case "error": turnRoot().append(h("div", { class: "banner err" }, e.message)); break;
+    case "turn_interrupted": interrupted(e); break;
+    case "turn_ended": turnEnded(e); break;
+    case "provider_switched": app.provider = e.provider; app.model = e.model; renderModels();
+      note(`${e.by === app.me ? "You" : e.by} switched to ${modelName(e.model)}`); syncSoon(); break;
+  }
+  renderTrace();
 }
-function ensureTurn() { return turn || newTurn("assistant"); }
-function textSeg() { const t = ensureTurn(); if (!t.text) { t.text = el("div", "text"); t.root.appendChild(t.text); t.thinking = null; } return t.text; }
-function thinkingSeg() {
-  const t = ensureTurn();
-  if (!t.thinking) { const d = el("details", "thinking"); d.appendChild(el("summary", null, "thinking")); t.thinkDiv = d.appendChild(el("div")); t.root.appendChild(d); t.thinking = d; t.text = null; }
-  return t.thinkDiv;
+
+/* ---------- transcript ---------- */
+function clearEmpty() { $("#log .empty")?.remove(); }
+function scrollDown() { const s = $("#logScroll"); if (s.scrollHeight - s.scrollTop - s.clientHeight < 260) s.scrollTop = s.scrollHeight; }
+function note(text) { $("#log").append(h("div", { class: "note" }, text)); scrollDown(); }
+function flash(text) { const b = h("div", { class: "banner err" }, text); $("#log").append(b); scrollDown(); setTimeout(() => b.remove(), 6000); }
+function stripAuthor(author, text) {
+  const names = (author || "").split(", ");
+  if (names.length === 1 && text.startsWith(names[0] + ": ")) return text.slice(names[0].length + 2);
+  return text;
 }
+function userBubble(author, text, queued) {
+  const who = h("div", { class: "who" }, h("span", { class: "avatar", style: `background:${colorFor(author)};width:20px;height:20px;font-size:11px;margin:0;border:0` }, author[0] || "?"),
+                author === app.me ? `${author} (you)` : author, queued ? h("i", {}, "queued") : null);
+  $("#log").append(h("div", { class: "u" + (queued ? " queued" : "") }, who, h("div", { class: "body" }, stripAuthor(author, text))));
+}
+function newTurn(provider, model, authors) {
+  clearEmpty();
+  const who = h("div", { class: "who" }, modelName(model), authors?.length > 1 ? h("small", {}, `answering ${authors.join(" and ")}`) : null);
+  const root = h("div", { class: "turn" }, who);
+  $("#log").append(root);
+  return { root, prose: null, proseText: "", think: null, tools: {}, calls: [] };
+}
+function turnRoot() { if (!app.turn) app.turn = newTurn(app.provider, app.model); return app.turn.root; }
+function thinkSeg() {
+  const t = app.turn || (app.turn = newTurn(app.provider, app.model));
+  if (!t.think) {
+    const d = h("details", { class: "think" }, h("summary", {}, "Thinking"), h("div"));
+    t.root.append(d); t.think = d; t.prose = null;
+  }
+  return t.think.querySelector("div");
+}
+function bumpThinking() { const t = app.turn?.think; if (!t) return; const n = t.querySelector("div").textContent.trim().split(/\s+/).length; t.querySelector("summary").textContent = `Thinking, ${n} words`; }
+function appendProse(text) {
+  const t = app.turn || (app.turn = newTurn(app.provider, app.model));
+  if (!t.prose) { t.prose = h("div", { class: "prose" }); t.proseText = ""; t.root.append(t.prose); t.think = null; }
+  t.proseText += text; t.prose.innerHTML = md(t.proseText);
+}
+function esc(s) { return s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
+function md(src) {
+  const parts = src.split(/```(?:\w+)?\n?/);
+  return parts.map((p, i) => i % 2 ? `<pre>${esc(p.replace(/\n$/, ""))}</pre>` :
+    esc(p).split(/\n{2,}/).filter((x) => x.trim()).map((para) => `<p>${para.replace(/`([^`]+)`/g, "<code>$1</code>").replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>").replace(/\n/g, "<br>")}</p>`).join("")).join("");
+}
+function argOf(input) { return input.command || (input.old_string != null ? `${input.path} (edit)` : input.path) || JSON.stringify(input); }
 function toolCard(id, name, input) {
-  const t = ensureTurn(); t.text = null; t.thinking = null;
-  const c = el("div", "tool running");
-  const head = el("div", "head"); head.innerHTML = `<b></b> <span></span>`;
-  head.querySelector("b").textContent = name;
-  head.querySelector("span").textContent = input.command || input.path || JSON.stringify(input);
-  c.appendChild(head); t.root.appendChild(c); t.tools[id] = c; return c;
+  const t = app.turn || (app.turn = newTurn(app.provider, app.model));
+  t.prose = null; t.think = null;
+  const d = h("details", { class: "tool running" }, h("summary", {}, h("span", { class: "st" }), h("span", { class: "nm" }, name), h("span", { class: "arg" }, argOf(input)), h("span", { class: "dur" }, "running")));
+  t.root.append(d); t.tools[id] = d; return d;
 }
-
-function renderHistory(state) {
-  $log.innerHTML = "";
-  for (const m of state.messages) {
-    if (m.role === "user") { if (m.synthetic) sys("· interrupt note added to context ·"); else { const a = m.author || "user", t = m.content.map(b => b.text || "").join(""); userMsg(a, t.startsWith(a + ": ") ? t.slice(a.length + 2) : t); } continue; }
+function toolDone(e) {
+  const d = app.turn?.tools[e.id]; if (!d) return;
+  d.classList.remove("running"); if (e.is_error) d.classList.add("err");
+  d.querySelector(".dur").textContent = `${e.duration_s}s`;
+  d.append(h("pre", {}, e.output.slice(0, 6000)));
+}
+function interrupted(e) {
+  const s = e.summary;
+  if (app.turn) {
+    if (app.turn.prose) app.turn.prose.classList.add("cut");
+    for (const d of Object.values(app.turn.tools)) if (d.classList.contains("running")) {
+      d.classList.remove("running"); d.classList.add("killed"); d.querySelector(".dur").textContent = "killed";
+      d.append(h("pre", {}, "Killed by the interrupt. Its partial output went to the model."));
+    }
+  }
+  const items = [];
+  if (s) {
+    if (s.kept_partial_text_chars) items.push(`Kept ${s.kept_partial_text_chars} characters of partial reply in context`);
+    if (s.completed_tools?.length) items.push(`Finished before the stop: ${s.completed_tools.join(", ")}`);
+    if (s.killed_tools?.length) items.push(`Killed: ${s.killed_tools.join(", ")}`);
+    if (s.skipped_tools?.length) items.push(`Never ran: ${s.skipped_tools.join(", ")}`);
+    if (s.discarded?.length) items.push(`Dropped ${s.discarded.join("; ")}`);
+    items.push("Added a note telling the model it was interrupted");
+  }
+  const who = e.by === app.me ? "You" : e.by;
+  turnRoot().append(h("div", { class: "cut-banner" }, h("b", {}, `${who} stopped the agent during ${s?.phase || "the turn"}.`), items.length ? h("ul", {}, items.map((x) => h("li", {}, x))) : null));
+  if (app.trace) { const now = performance.now() - app.trace.start; app.trace.irq = now; app.trace.irqBy = who;
+    for (const k in app.trace.lanes) app.trace.lanes[k].forEach((sg) => { if (sg.t1 == null) { sg.t1 = now; sg.cut = true; } }); }
+  setLoop("interrupted");
+  setTimeout(() => setLoop("idle"), 900);
+  scrollDown();
+}
+function turnEnded(e) {
+  if (app.trace) { const now = performance.now() - app.trace.start; for (const k in app.trace.lanes) app.trace.lanes[k].forEach((sg) => { if (sg.t1 == null) sg.t1 = now; }); app.trace.end = now; }
+  if (e.reason === "max_iterations") turnRoot().append(h("div", { class: "banner" }, e.detail));
+  if (e.reason === "error") turnRoot().append(h("div", { class: "banner err" }, `The turn failed: ${e.detail}`));
+  if (app.turn?.calls.length) {
+    const c = app.turn.calls, total = c.reduce((a, u) => a + inputTotal(u), 0), read = c.reduce((a, u) => a + u.cache_read_tokens, 0);
+    if (total) app.turn.root.append(h("div", { class: "turn-foot" }, `${c.length} model call${c.length > 1 ? "s" : ""}, ${fmt(total)} input tokens${read ? `, ${Math.round((100 * read) / total)}% read from cache` : ""}`));
+  }
+  if (e.reason !== "interrupted") setLoop(e.reason === "completed" || e.reason === "max_iterations" ? "done" : "idle");
+  app.busy = false; app.turn = null; renderControls(); syncSoon();
+}
+function renderHistory(messages) {
+  $("#log").replaceChildren();
+  if (!messages.length) { $("#log").append(emptyState()); return; }
+  let turn = null;
+  for (const m of messages) {
+    if (m.role === "user") {
+      turn = null;
+      if (m.synthetic) note("Interrupt note added to the model's context");
+      else userBubble(m.author || "user", m.content.map((b) => b.text || "").join(""), false);
+      continue;
+    }
     if (m.role === "assistant") {
-      newTurn(`${m.provider || "assistant"} · ${m.model || ""}${m.partial ? " · partial" : ""}`);
+      if (!turn) turn = app.turn = newTurn(m.provider, m.model);
       for (const b of m.content) {
-        if (b.type === "text") textSeg().textContent += b.text;
-        else if (b.type === "thinking" && b.text) thinkingSeg().textContent += b.text;
+        if (b.type === "text") { appendProse(b.text); if (m.partial) app.turn.prose.classList.add("cut"); app.turn.prose = null; }
+        else if (b.type === "thinking" && b.text) { thinkSeg().textContent += b.text; bumpThinking(); }
         else if (b.type === "tool_use") toolCard(b.id, b.tool_name, b.input);
       }
       continue;
     }
     if (m.role === "tool" && turn) for (const b of m.content) {
-      const c = turn.tools[b.tool_use_id]; if (!c) continue;
-      c.classList.remove("running"); if (b.is_error) c.classList.add("err");
-      c.appendChild(el("pre", null, b.output.slice(0, 4000)));
+      const d = turn.tools[b.tool_use_id]; if (!d) continue;
+      d.classList.remove("running"); if (b.is_error) d.classList.add(/^Interrupted/.test(b.output) ? "killed" : "err");
+      d.querySelector(".dur").textContent = /^Interrupted/.test(b.output) ? "killed" : /^Not executed/.test(b.output) ? "not run" : "";
+      d.append(h("pre", {}, b.output.slice(0, 6000)));
     }
   }
-  turn = null;
+  app.turn = null; scrollDown();
+}
+function emptyState() {
+  const demo = cfg.mode === "demo";
+  const tries = [
+    ["Fix the bug in fizzbuzz.py", "Watch it read, run, edit and test. Press Stop at any step."],
+    ["Run the test suite", "Takes about five seconds. Stop it mid-run to see a tool get killed."],
+    ["Explain how interrupts work", "A long answer, so you can stop it mid-sentence."],
+    ["!ls -la", "Start a message with ! to run a shell command directly."],
+  ];
+  return h("div", { class: "empty" },
+    h("h1", {}, "An agent loop you can stop at any moment"),
+    h("p", {}, demo
+      ? "This is a demo agent running in your browser on a small Python project. Interrupt it while it streams or while a command runs, switch models, or send as bob to see how two people share one session. The panel on the right shows the loop's state and exactly what the model will see next."
+      : "Connected to your agent-server. Messages go to the real model with real tools in the server's working directory."),
+    h("div", { class: "tries" }, tries.map(([t, d]) => { const b = h("button", { class: "try", type: "button" }, h("b", {}, t), h("span", {}, d)); b.onclick = () => submit(t, false); return b; })));
 }
 
-const handlers = {
-  snapshot(e) { renderHistory(e.state); renderUsers(e.users); setBusy(e.state.state === "streaming" || e.state.state === "tool_running"); sys(`connected · ${e.state.active_provider} / ${e.state.active_model} · providers: ${e.providers.join(", ")}`); },
-  presence(e) { renderUsers(e.users); if (e.joined && e.joined !== me) sys(`${e.joined} joined`); if (e.left) sys(`${e.left} left`); },
-  user_message(e) { userMsg(e.author, e.text, e.queued); },
-  turn_started(e) { setBusy(true); document.querySelectorAll(".user.queued").forEach(n => { n.classList.remove("queued"); n.querySelector(".who").textContent = n.querySelector(".who").textContent.replace(" · queued", ""); }); newTurn(`${e.provider} · ${e.model} · answering ${e.authors.join(", ")}`); },
-  thinking_delta(e) { const s = stick(); thinkingSeg().textContent += e.text; s(); },
-  text_delta(e) { const s = stick(); textSeg().textContent += e.text; s(); },
-  tool_exec_start(e) { const s = stick(); toolCard(e.id, e.tool_name, e.input); s(); },
-  tool_exec_end(e) { const c = ensureTurn().tools[e.id]; if (!c) return; const s = stick(); c.classList.remove("running"); if (e.is_error) c.classList.add("err"); c.appendChild(el("pre", null, e.output.slice(0, 4000))); c.appendChild(el("div", "meta", `${e.duration_s}s`)); s(); },
-  usage(e) { const t = ensureTurn(); t.text = null; t.thinking = null; const parts = [`${e.model}`, `in ${e.input_tokens}`, `out ${e.output_tokens}`]; if (e.reasoning_tokens) parts.push(`reasoning ${e.reasoning_tokens}`); if (e.cache_read_tokens || e.cache_write_tokens) parts.push(`cache read ${e.cache_read_tokens} / write ${e.cache_write_tokens}`); t.root.appendChild(el("div", "meta", parts.join(" · "))); },
-  retrying(e) { if (e.discarded_partial && turn && turn.text) turn.text.classList.add("discarded"); if (turn) turn.text = null; ensureTurn().root.appendChild(el("div", "banner", `retry ${e.attempt} in ${e.delay_s}s — ${e.error}`)); },
-  notice(e) { (turn ? turn.root : $log).appendChild(el("div", "banner", e.text)); },
-  error(e) { (turn ? turn.root : $log).appendChild(el("div", "banner err", e.message)); },
-  turn_interrupted(e) { document.querySelectorAll(".tool.running").forEach(c => { c.classList.remove("running"); c.classList.add("err"); c.appendChild(el("pre", null, "killed by interrupt")); }); const d = e.summary ? describe(e.summary) : ""; (turn ? turn.root : $log).appendChild(el("div", "banner", `⏹ ${e.by === me ? "you" : e.by} interrupted${d ? " — " + d : ""}`)); },
-  turn_ended(e) { if (e.reason === "max_iterations") sys(e.detail); if (e.reason === "error") (turn ? turn.root : $log).appendChild(el("div", "banner err", e.detail)); turn = null; setBusy(false); },
-  provider_switched(e) { sys(`${e.by === me ? "you" : e.by} switched to ${e.provider} / ${e.model}`); },
+/* ---------- header widgets ---------- */
+function renderModels() {
+  const sel = $("#model"); const models = app.models || MODELS; const groups = {};
+  for (const [alias, [p, m]] of Object.entries(models)) (groups[p] ||= []).push([alias, m]);
+  sel.replaceChildren(...Object.entries(groups).map(([p, items]) => {
+    const off = app.available.length && !app.available.includes(p);
+    return h("optgroup", { label: PROVIDER_NAMES[p] + (off ? " (no API key on server)" : "") },
+      items.map(([alias, m]) => h("option", { value: alias, disabled: off, selected: m === app.model && p === app.provider, text: modelName(m) })));
+  }));
+  if (![...sel.options].some((o) => o.selected)) sel.prepend(h("option", { selected: true, value: "", text: modelName(app.model) || "Model" }));
+}
+function renderPeople() {
+  $("#people").replaceChildren(...app.users.map((u) => h("span", { class: "avatar" + (u === app.me ? " me" : ""), style: `background:${colorFor(u)}`, title: u === app.me ? `${u} (you)` : u }, u[0] || "?")));
+}
+function renderControls() {
+  const busy = app.busy, demo = cfg.mode === "demo";
+  $("#stop").hidden = !busy; $("#barge").hidden = !busy; $("#bobBtn").hidden = !(busy && demo);
+  $("#send").textContent = busy ? "Queue" : "Send";
+  $("#hint").textContent = busy ? "Esc stops the agent. Queued messages run when this turn ends." : "Enter sends, Shift+Enter adds a line";
+}
+
+/* ---------- inspector: state machine ---------- */
+const SM_NODES = { error: [46, 24, "Error"], idle: [46, 96, "Idle"], streaming: [168, 44, "Streaming"], tool_running: [284, 44, "Tool running"],
+                   done: [168, 140, "Done"], interrupted: [284, 140, "Interrupted"] };
+/* Hand-routed so no two edges cross. Done accepts the next message just like Idle. */
+const SM_EDGES = {
+  "idle>streaming": "M92 90 L122 54", "streaming>tool_running": "M214 38 L238 38", "tool_running>streaming": "M238 50 L214 50",
+  "streaming>done": "M162 59 L162 125", "done>streaming": "M174 125 L174 59", "streaming>interrupted": "M200 59 L256 125",
+  "tool_running>interrupted": "M284 59 L284 125", "streaming>error": "M122 36 L92 28", "error>idle": "M46 39 L46 81",
+  "interrupted>idle": "M284 155 C284 172 46 172 46 111",
 };
-function describe(s) {
-  const p = [`during ${s.phase}`];
-  if (s.kept_partial_text_chars) p.push(`kept ${s.kept_partial_text_chars} chars of partial text`);
-  if (s.killed_tools.length) p.push("killed " + s.killed_tools.join(", "));
-  if (s.skipped_tools.length) p.push("skipped " + s.skipped_tools.join(", "));
-  if (s.discarded.length) p.push("discarded " + s.discarded.join(", "));
-  return p.join("; ");
+function drawSM() {
+  const svg = $("#sm"); const NS = "http://www.w3.org/2000/svg"; const mk = (t, a) => { const e = document.createElementNS(NS, t); for (const k in a) e.setAttribute(k, a[k]); return e; };
+  svg.replaceChildren();
+  const defs = mk("defs", {}); const marker = mk("marker", { id: "ar", viewBox: "0 0 8 8", refX: 7, refY: 4, markerWidth: 6, markerHeight: 6, orient: "auto" });
+  marker.append(mk("path", { d: "M0 0L8 4L0 8z", fill: "#7D8B96" })); defs.append(marker); svg.append(defs);
+  for (const [k, d] of Object.entries(SM_EDGES)) svg.append(mk("path", { d, class: "edge", "marker-end": "url(#ar)", "data-edge": k }));
+  const W = 92, H = 30;
+  for (const [k, [x, y, label]] of Object.entries(SM_NODES)) {
+    const g = mk("g", { class: "node" + (k === "interrupted" ? " irq" : ""), "data-node": k });
+    g.append(mk("rect", { x: x - W / 2, y: y - H / 2, width: W, height: H, rx: 6 }));
+    const t = mk("text", { x, y }); t.textContent = label; g.append(t); svg.append(g);
+  }
 }
-function renderUsers(users) {
-  const box = document.getElementById("users"); box.innerHTML = "";
-  for (const u of users) box.appendChild(el("span", "chip" + (u === me ? " me" : ""), u));
+function setLoop(s) {
+  const prev = app.loopState; app.loopState = s;
+  $("#smLabel").textContent = SM_NODES[s]?.[2].toLowerCase() || s;
+  document.querySelectorAll("#sm .node").forEach((n) => n.classList.toggle("on", n.dataset.node === s));
+  document.querySelectorAll("#sm .edge").forEach((e) => { e.classList.remove("hot", "irq"); });
+  const edge = document.querySelector(`#sm [data-edge="${prev}>${s}"]`);
+  if (edge) { edge.classList.add("hot"); if (s === "interrupted" || prev === "interrupted") edge.classList.add("irq"); }
 }
 
-let ws;
-function connect() {
-  ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws/${encodeURIComponent(sid)}?user=${encodeURIComponent(me)}`);
-  ws.onmessage = (m) => { const e = JSON.parse(m.data); (handlers[e.type] || (() => {}))(e); };
-  ws.onclose = () => { $status.textContent = "reconnecting…"; setTimeout(connect, 1000); };
+/* ---------- inspector: context ledger ---------- */
+function setLedger(messages) {
+  const fresh = messages.length > app.seen ? app.seen : messages.length;
+  app.seen = messages.length; app.messages = messages;
+  $("#ledgerCount").textContent = `${messages.length} message${messages.length === 1 ? "" : "s"}`;
+  const ul = $("#ledger");
+  if (!messages.length) { ul.replaceChildren(h("li", {}, h("span", { class: "emptyrow" }, "Empty. Send a message to start the conversation."))); return; }
+  ul.replaceChildren(...messages.map((m, i) => {
+    const blocks = m.content.map((b) => b.type === "tool_use" ? `tool call: ${b.tool_name}` : b.type === "tool_result" ? `result${b.is_error ? " (error)" : ""}` : b.type === "thinking" ? `thinking from ${PROVIDER_NAMES[b.provider] || b.provider}` : "text");
+    const first = m.content.find((b) => b.type === "text" && b.text) || m.content.find((b) => b.output || b.input) || m.content.find((b) => b.text);
+    const pv = first ? (first.text || first.output || argOf(first.input)).replace(/\s+/g, " ").slice(0, 120) : "";
+    const role = m.role === "tool" ? "Tool results" : m.role === "user" ? (m.synthetic ? "Interrupt note" : `User${m.author ? `, ${m.author}` : ""}`) : "Assistant";
+    return h("li", { class: i >= fresh && app.synced ? "fresh" : "" }, h("span", { class: "ix" }, String(i)),
+      h("div", {}, h("div", { class: "hd" }, role, m.partial ? h("span", { class: "tag partial" }, "partial") : null, m.synthetic ? h("span", { class: "tag synthetic" }, "added by the loop") : null,
+        m.model ? h("span", { class: "tag src" }, modelName(m.model)) : null),
+        h("div", { class: "blocks" }, blocks.join(", ")), pv ? h("div", { class: "pv", title: pv }, pv) : null));
+  }));
+  ul.scrollTop = ul.scrollHeight;
 }
+
+/* ---------- inspector: prompt cache ---------- */
+const fmt = (n) => n >= 1000 ? (n / 1000).toFixed(n >= 10000 ? 0 : 1) + "k" : String(n);
+const inputTotal = (u) => u.provider === "anthropic" ? u.input_tokens + u.cache_read_tokens + u.cache_write_tokens : u.input_tokens;
+function renderCache() {
+  const box = $("#cache"); const calls = app.usage.filter((u) => inputTotal(u) > 0).slice(-12);
+  if (!calls.length) { $("#cacheLabel").textContent = "no calls yet"; box.replaceChildren(h("div", { class: "explain", style: "margin:0" }, "Each model call appears here. Claude writes the conversation into the cache and reads it back on the next call; OpenAI and Gemini cache automatically. Switching models starts a new cache.")); return; }
+  const max = Math.max(...calls.map(inputTotal));
+  const all = app.usage.reduce((a, u) => a + inputTotal(u), 0), read = app.usage.reduce((a, u) => a + u.cache_read_tokens, 0);
+  $("#cacheLabel").textContent = `${app.usage.length} call${app.usage.length > 1 ? "s" : ""}`;
+  box.replaceChildren(
+    ...calls.map((u) => { const t = inputTotal(u), w = (100 * t) / max; const r = (100 * u.cache_read_tokens) / t, wr = (100 * u.cache_write_tokens) / t;
+      return h("div", { class: "bar", title: `${modelName(u.model)}: ${t} input tokens, ${u.cache_read_tokens} read from cache, ${u.cache_write_tokens} written` },
+        h("span", { style: "white-space:nowrap;overflow:hidden;text-overflow:ellipsis" }, modelName(u.model).replace(/^Claude /, "")), h("div", { class: "track", style: `width:${w}%` }, h("i", { class: "read", style: `width:${r}%` }), h("i", { class: "write", style: `width:${wr}%` }), h("i", { class: "rest", style: `flex:1` })), h("span", {}, fmt(t))); }),
+    h("div", { class: "total" }, `${all ? Math.round((100 * read) / all) : 0}% of ${fmt(all)} input tokens came from the cache`),
+    h("div", { class: "legend" }, h("span", {}, h("i", { style: "background:var(--say)" }), "read from cache"), h("span", {}, h("i", { style: "background:#9CCFD4" }), "written to cache"), h("span", {}, h("i", { style: "background:#9AA7B1" }), "not cached")));
+}
+
+/* ---------- the trace strip ---------- */
+function traceOpen(lane, label = "", force = false) {
+  const tr = app.trace; if (!tr) return; const segs = tr.lanes[lane]; const now = performance.now() - tr.start;
+  const last = segs.at(-1);
+  if (!force && last && last.t1 == null && last.label === label) return;
+  if (last && last.t1 == null) last.t1 = now;
+  segs.push({ t0: now, t1: null, label });
+}
+function traceClose(lane) { const tr = app.trace; if (!tr) return; const last = tr.lanes[lane].at(-1); if (last && last.t1 == null) last.t1 = performance.now() - tr.start; }
+function renderTrace() {
+  const svg = $("#trace"); const W = svg.clientWidth || 800, H = 124; const NS = "http://www.w3.org/2000/svg";
+  const mk = (t, a, txt) => { const e = document.createElementNS(NS, t); for (const k in a) e.setAttribute(k, a[k]); if (txt != null) e.textContent = txt; return e; };
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`); svg.replaceChildren();
+  const tr = app.trace; const pad = 14, laneY = [26, 48, 70, 92], laneH = 14;
+  const now = tr ? (tr.end ?? performance.now() - tr.start) : 0;
+  const span = Math.max(8000, now * 1.08);
+  const x = (t) => pad + ((W - pad * 2) * t) / span;
+  for (let s = 0; s <= span; s += span > 40000 ? 5000 : 1000) svg.append(mk("line", { x1: x(s), x2: x(s), y1: 22, y2: 110, stroke: "var(--scope-grid)", "stroke-width": s % 5000 ? 1 : 1.6 }));
+  laneY.forEach((y) => svg.append(mk("line", { x1: pad, x2: W - pad, y1: y + laneH / 2, y2: y + laneH / 2, stroke: "#1C2A35" })));
+  if (!tr) { svg.append(mk("text", { x: pad, y: 15, class: "trace-caption" }, W < 560 ? "Each turn is drawn here live." : "Each turn is drawn here as it happens: thinking, text, tool runs, and the moment someone interrupts.")); return; }
+  svg.append(mk("text", { x: pad, y: 15, class: "trace-caption" }, `${tr.label}, ${(now / 1000).toFixed(1)}s${tr.end == null ? "" : tr.irq != null ? ", interrupted" : ", finished"}`));
+  const colors = { think: "var(--scope-think)", say: "var(--scope-say)", tool: "var(--scope-tool)" };
+  const draw = (lane, y, color) => tr.lanes[lane].forEach((sg) => {
+    const x0 = x(sg.t0), x1 = Math.max(x0 + 2, x(sg.t1 ?? now));
+    svg.append(mk("rect", { x: x0, y, width: x1 - x0, height: laneH, rx: 2, fill: color, opacity: sg.cut ? .55 : 1 }));
+    if (lane === "tool" && x1 - x0 > 46) svg.append(mk("text", { x: x0 + 5, y: y + 11, class: "trace-label" }, sg.label));
+  });
+  tr.lanes.state.forEach((sg) => { const x0 = x(sg.t0), x1 = Math.max(x0 + 2, x(sg.t1 ?? now));
+    svg.append(mk("rect", { x: x0, y: laneY[0] + 4, width: x1 - x0, height: 6, rx: 1, fill: sg.label === "tool" ? "var(--scope-tool)" : "var(--scope-say)", opacity: .7 })); });
+  draw("think", laneY[1], colors.think); draw("say", laneY[2], colors.say); draw("tool", laneY[3], colors.tool);
+  if (tr.irq != null) {
+    const xi = x(tr.irq);
+    svg.append(mk("line", { x1: xi, x2: xi, y1: 20, y2: 112, stroke: "var(--scope-irq)", "stroke-width": 2.5 }));
+    const lbl = `Interrupted by ${tr.irqBy === "You" ? "you" : tr.irqBy}`; const right = xi + 8 + lbl.length * 6.4 < W;
+    svg.append(mk("text", { x: right ? xi + 7 : xi - 7, y: 120, class: "trace-irq-label", "text-anchor": right ? "start" : "end" }, lbl));
+  } else if (tr.end == null) svg.append(mk("line", { x1: x(now), x2: x(now), y1: 20, y2: 112, stroke: "#7F93A3", "stroke-dasharray": "2 3" }));
+}
+(function tick() { if (app.trace && app.trace.end == null) renderTrace(); requestAnimationFrame(tick); })();
+addEventListener("resize", renderTrace);
+
+/* ---------- composer ---------- */
+function submit(text, interrupt) {
+  text = (text ?? $("#input").value).trim(); if (!text) return;
+  const author = cfg.mode === "demo" ? $("#as").value : app.me;
+  send({ type: "message", text, interrupt, author });
+  $("#input").value = ""; autosize();
+}
+function autosize() { const t = $("#input"); t.style.height = "auto"; t.style.height = Math.min(t.scrollHeight, 180) + "px"; }
+$("#composer").addEventListener("submit", (ev) => { ev.preventDefault(); submit(null, false); });
+$("#barge").onclick = () => submit(null, true);
+$("#stop").onclick = () => send({ type: "interrupt" });
+$("#bobBtn").onclick = () => send({ type: "message", author: "bob", text: "Also add a docstring to fizzbuzz() please" });
+$("#input").addEventListener("keydown", (ev) => { if (ev.key === "Enter" && !ev.shiftKey && !ev.isComposing) { ev.preventDefault(); submit(null, false); } });
+$("#input").addEventListener("input", autosize);
+$("#model").onchange = (ev) => { if (ev.target.value) send({ type: "switch", alias: ev.target.value }); };
+$("#as").onchange = (ev) => { if (cfg.mode === "demo") { app.me = ev.target.value; renderPeople(); } };
+addEventListener("keydown", (ev) => { if (ev.key === "Escape" && app.busy && !$("#connDialog").open) { ev.preventDefault(); send({ type: "interrupt" }); } });
+$("#inspectToggle").onclick = () => document.body.classList.toggle("inspecting");
+$("#closeInspect").onclick = () => document.body.classList.remove("inspecting");
+
+/* ---------- connection dialog ---------- */
+$("#conn").onclick = () => {
+  const f = $("#connForm");
+  f.mode.value = cfg.mode; $("#fServer").value = cfg.server; $("#fSession").value = cfg.session; $("#fUser").value = cfg.user;
+  $("#connDialog").showModal();
+};
+$("#connDialog").addEventListener("close", () => {
+  if ($("#connDialog").returnValue !== "ok") return;
+  const f = $("#connForm");
+  cfg.mode = f.mode.value || "demo";
+  cfg.server = $("#fServer").value.trim() || "ws://127.0.0.1:8000";
+  if (!/^wss?:\/\//.test(cfg.server)) cfg.server = cfg.server.replace(/^http/, "ws").replace(/^(?!wss?:)/, "ws://");
+  cfg.session = $("#fSession").value.trim() || "demo"; cfg.user = $("#fUser").value.trim() || "alice";
+  for (const k of ["mode", "server", "session", "user"]) store.set(k, cfg[k]);
+  connect();
+});
+
+function renderAll() { drawSM(); setLoop(app.loopState); setLedger([]); renderCache(); renderModels(); renderControls(); renderTrace(); }
+drawSM();
 connect();
-
-function send(interrupt) {
-  const text = $input.value.trim(); if (!text) return;
-  ws.send(JSON.stringify({ type: "message", text, interrupt })); $input.value = ""; $input.style.height = "";
-}
-document.getElementById("send").onclick = () => send(false);
-document.getElementById("barge").onclick = () => send(true);
-$stop.onclick = () => ws.send(JSON.stringify({ type: "interrupt" }));
-document.getElementById("model").onchange = (ev) => { if (ev.target.value) ws.send(JSON.stringify({ type: "switch", alias: ev.target.value })); ev.target.value = ""; };
-$input.addEventListener("keydown", (ev) => { if (ev.key === "Enter" && !ev.shiftKey) { ev.preventDefault(); send(false); } });
-$input.addEventListener("input", () => { $input.style.height = "auto"; $input.style.height = Math.min($input.scrollHeight, 160) + "px"; });
-document.addEventListener("keydown", (ev) => { if (ev.key === "Escape" && busy) ws.send(JSON.stringify({ type: "interrupt" })); });
 </script>
 </body>
 </html>
