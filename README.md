@@ -1,5 +1,7 @@
 # agent-loop
 
+**Live site: https://pranjal-agl.github.io/agent-loop/**. It opens a demo agent that runs in your browser, so you can try interrupts, model switching and multiplayer with no setup. Use the connection button in the header to point the same page at your own `agent-server` and talk to the real models.
+
 A multi-provider agent loop: **Claude, OpenAI and Gemini**, with file and shell tools. You can interrupt it at any point and the conversation continues cleanly. You can switch models between messages, and several people can share one session.
 
 ```
@@ -114,6 +116,14 @@ Thinking blocks can't carry `cache_control`, so the marker walks back to the nea
 - **Real-time visibility.** Every event (thinking/text deltas, tool start/end, usage, retries, switches) is broadcast to every client. Presence is a separate ephemeral event that never touches history. Late joiners get a `Snapshot` of the full state.
 - **Conflicts.** Model switches go through a lock and are broadcast, so the last writer wins and everyone sees it. A switch during a turn takes effect at the next model call. `Message.author` records who said what, and user text is prefixed with the author's name so the model can tell people apart.
 - **Not done, and how I'd do it.** Persistence (state is already a pydantic model, so it would serialize to Postgres/Redis per session). Auth and roles (who may interrupt or switch). Per-user rate limits. Multi-process fan-out (Redis pub/sub instead of in-process queues). Bounded subscriber queues so a slow client gets dropped instead of growing memory. Per-user workdirs or a container sandbox.
+
+### The web UI
+
+`src/agent_loop/web/index.html` is one self-contained page. `agent-server` serves it, and GitHub Pages hosts the same file (`.github/workflows/pages.yml` republishes it on every change to `main`).
+- **Trace strip:** each turn is drawn live as lanes for state, thinking, text and tools. An interrupt is a red cut line labeled with who pressed Stop.
+- **Inspector:** the loop's state machine with the current state lit; the exact context the model will see next, so you can watch the partial reply and the interrupt note appear; and per-call prompt-cache bars.
+- **Two modes:** on GitHub Pages it starts with a demo agent. That's a simulated model with a pretend shell and a small Python project, speaking the same WebSocket protocol and following the same interrupt and queueing rules as the Python loop. Switch to *My agent-server* to drive the real loop; Chrome may ask to allow access to your local network. Served by `agent-server`, it connects to that server automatically.
+- **Multiplayer:** presence avatars, "queued" markers, coalesced turns ("answering alice and bob"), attributed interrupts, and *Interrupt and send*. In demo mode you can send as bob, or queue a message from bob while the agent works.
 
 ## 6. Bugs found and fixed
 

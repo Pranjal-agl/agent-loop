@@ -116,6 +116,8 @@ class Snapshot(BaseModel):
     providers: list[str]
     users: list[str]
     queued: int
+    # alias -> (provider, model), so UIs can offer a model picker
+    models: dict[str, tuple[str, str]] = {}
 
 
 LoopOutput = Union[StreamEvent, ToolExecutionStart, ToolExecutionEnd, Retrying, TurnEnded]

@@ -11,6 +11,7 @@ one shared working directory). All protocol messages are JSON:
   client -> server
     {"type": "message", "text": "...", "interrupt": false}
     {"type": "interrupt"}
+    {"type": "sync"}                       -> a fresh Snapshot for this client
     {"type": "switch", "provider": "anthropic", "model": "claude-opus-5-5"}   (or {"alias": "opus"})
   server -> client
     every core.events / providers.base event, model_dump()'d, e.g.
@@ -71,6 +72,8 @@ def create_app(workdir: Path, config: Config | None = None) -> FastAPI:
                 try:
                     if kind == "message" and str(msg.get("text", "")).strip():
                         await session.submit(msg["text"].strip(), author=user, interrupt=bool(msg.get("interrupt")))
+                    elif kind == "sync":  # client wants the current history (e.g. after a turn)
+                        q.put_nowait(session.snapshot())
                     elif kind == "interrupt":
                         await session.interrupt(by=user)
                     elif kind == "switch":

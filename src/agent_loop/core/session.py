@@ -75,12 +75,17 @@ class Session:
         q: asyncio.Queue = asyncio.Queue()
         self._subscribers[q] = user
         self._users[user] += 1
-        q.put_nowait(Snapshot(
-            session_id=self.id, state=self.loop.state.model_dump(mode="json"),
-            providers=list(self.loop.providers), users=self.users, queued=self._inbox.qsize(),
-        ))
+        q.put_nowait(self.snapshot())
         self.broadcast(Presence(users=self.users, joined=user))
         return q
+
+    def snapshot(self) -> Snapshot:
+        from ..config import MODEL_ALIASES
+        return Snapshot(
+            session_id=self.id, state=self.loop.state.model_dump(mode="json"),
+            providers=list(self.loop.providers), users=self.users, queued=self._inbox.qsize(),
+            models=MODEL_ALIASES,
+        )
 
     def unsubscribe(self, q: asyncio.Queue) -> None:
         user = self._subscribers.pop(q, None)
